@@ -1,6 +1,15 @@
-<template>
+<!-- <template>
   <div id="app">
     <CanDumpUpload />
+  </div>
+</template> -->
+<template>
+  <div>
+    <nav>
+      <router-link to="/">Home</router-link>
+      <router-link to="/connect">Connect Device</router-link>
+    </nav>
+    <router-view></router-view> <!-- This is where your components will be rendered -->
   </div>
 </template>
 

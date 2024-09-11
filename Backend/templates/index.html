@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pi Pico Serial Communication</title>
+</head>
+<body>
+    <h1>Pi Pico Serial Communication</h1>
+    <form id="commandForm">
+        <label for="command">Enter Command:</label>
+        <input type="text" id="command" name="command" required>
+        <button type="submit">Send Command</button>
+    </form>
+
+    <script>
+        document.getElementById('commandForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const formData = new FormData(event.target);
+            const command = formData.get('command');
+            const response = await fetch('/send_command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ command: command })
+            });
+            const result = await response.json();
+            console.log(result);
+            alert(result.message);
+        });
+    </script>
+</body>
+</html>
