@@ -1,138 +1,180 @@
+#include <SPI.h>
+#include <mcp_canbus.h>
 #include <EEPROM.h>
 #include <ArduinoJson.h>
 
+#define SPI_CS_PIN 9
+MCP_CAN CAN(SPI_CS_PIN);
+
 int led = 18;
 String deviceName;
+const int MAX_HW_FILTERS = 6;  // MCP2515 supports 6 filters
+int selectedIds[20];           // Example size for selected IDs (can hold up to 20)
+int numSelectedIds = 0;
 
-// Function to read the device name from EEPROM
+// Function to read device name from EEPROM
 void readDeviceName() {
-  char name[100]; // Buffer to read the name
+  char name[100];
   int i = 0;
-
-  // Read characters from EEPROM until the null terminator is found
+  
   while (true) {
     char c = EEPROM.read(i);
-    if (c == '\0' || i >= sizeof(name) - 1) break; // Stop at null terminator or buffer limit
+    if (c == '\0' || i >= sizeof(name) - 1) break;
     name[i] = c;
     i++;
   }
-  name[i] = '\0'; // Null-terminate the string
+  name[i] = '\0';
 
-  // Check if the name is empty or uninitialized
-  if (i == 0 || name[0] == '\0') {
-    deviceName = "Unknown"; // Default value
-  } else {
-    deviceName = String(name);
-  }
-
+  deviceName = (i == 0 || name[0] == '\0') ? "Unknown" : String(name);
   Serial.print("Read device name from EEPROM: ");
   Serial.println(deviceName);
 }
 
-// Function to write the device name to EEPROM
+// Function to write device name to EEPROM
 void writeDeviceName(const String& name) {
   Serial.print("Writing device name to EEPROM: ");
   Serial.println(name);
 
-  // Clear EEPROM space for the name
   for (int i = 0; i < 100; i++) {
-    EEPROM.write(i, 0); // Clear previous data
+    EEPROM.write(i, 0);
   }
 
-  // Write the new name
   for (int i = 0; i < name.length() && i < 99; i++) {
     EEPROM.write(i, name[i]);
   }
-  EEPROM.write(name.length(), '\0'); // Null-terminate the string
-  EEPROM.commit(); // Commit to save changes on ESP boards
+  EEPROM.write(name.length(), '\0');
+  EEPROM.commit();
 }
 
-void handleCommand(String command) {
-  command.trim(); // Remove any leading/trailing whitespace
-
-  if (command.equalsIgnoreCase("identify")) {
-    // Blink the LED for 3 seconds
-    for (int i = 0; i < 6; i++) {
-      digitalWrite(led, HIGH);  // Turn the LED on
-      delay(250);               // Wait for 250 milliseconds
-      digitalWrite(led, LOW);   // Turn the LED off
-      delay(250);               // Wait for 250 milliseconds
-    }
-  } 
-  else if (command.startsWith("set_name")) {
-    // Extract the name from the command
-    int index = command.indexOf(' ');
-    if (index > 0) {
-      String newName = command.substring(index + 1);
-      writeDeviceName(newName); // Save the new name to EEPROM
-      deviceName = newName; // Update the deviceName variable
-      Serial.println("Name set to: " + deviceName);
-    } else {
-      Serial.println("Invalid set_name command");
-    }
-  } 
-  else if (command.equalsIgnoreCase("get_name")) {
-    // Send the current device name back to the serial
-    // readDeviceName();
-    Serial.println("Device name: " + deviceName);
-  }
-  else if (command.startsWith("upload:")) {
-    // Handle upload
-    handleUpload(command);
-  }
-}
-
+// Function to process the upload command with JSON data
 void handleUpload(String command) {
-  // Remove the "upload:" prefix and ":end" suffix
   command.replace("upload:", "");
   command.replace(":end", "");
 
-  // Deserialize the JSON object
-  StaticJsonDocument<512> doc;  // Adjust size if needed
+  StaticJsonDocument<512> doc;
   DeserializationError error = deserializeJson(doc, command);
-
+  
   if (error) {
     Serial.print("Failed to parse JSON: ");
     Serial.println(error.c_str());
     return;
   }
 
-  // Example: Accessing data from the JSON object
-  if (doc.containsKey("key1")) {
-    int value1 = doc["key1"];  // Replace "key1" with actual JSON keys
-    Serial.print("Key1: ");
-    Serial.println(value1);
-  }
+  JsonArray arr = doc.as<JsonArray>();
+  numSelectedIds = arr.size();
   
-  if (doc.containsKey("key2")) {
-    String value2 = doc["key2"];
-    Serial.print("Key2: ");
-    Serial.println(value2);
+  for (int i = 0; i < numSelectedIds; i++) {
+    // Convert each hex string ID to an integer
+    const char* hexIdStr = arr[i].as<const char*>();
+    selectedIds[i] = strtol(hexIdStr, NULL, 16);  // Convert hex string to integer
+  }
+  Serial.println("Uploaded and set selected CAN IDs:");
+  for (int i = 0; i < numSelectedIds; i++) {
+    Serial.println(selectedIds[i], HEX);
   }
 
-  // Add additional processing of JSON data as needed
-  Serial.println("JSON upload processed successfully.");
+  if (numSelectedIds <= MAX_HW_FILTERS) {
+    setupHardwareFilters();
+  } else {
+    Serial.println("Using software filtering due to more than 6 IDs.");
+  }
+}
+
+// Function to set hardware filters
+void setupHardwareFilters() {
+  Serial.println("Setting up hardware filters:");
+  
+  for (int i = 0; i < 6; i++) {
+    if (i < numSelectedIds) {
+      CAN.init_Filt(i, 0, selectedIds[i]);
+      Serial.print("Hardware filter set for ID: 0x");
+      Serial.println(selectedIds[i], HEX);
+    } else {
+      CAN.init_Filt(i, 0, 0x00);  // Initialize with dummy values if no ID
+    }
+  }
+}
+
+void handleCommand(String command) {
+  command.trim();
+
+  if (command.equalsIgnoreCase("identify")) {
+    for (int i = 0; i < 6; i++) {
+      digitalWrite(led, HIGH);
+      delay(250);
+      digitalWrite(led, LOW);
+      delay(250);
+    }
+  } 
+  else if (command.startsWith("set_name")) {
+    int index = command.indexOf(' ');
+    if (index > 0) {
+      String newName = command.substring(index + 1);
+      writeDeviceName(newName);
+      deviceName = newName;
+      Serial.println("Name set to: " + deviceName);
+    } else {
+      Serial.println("Invalid set_name command");
+    }
+  } 
+  else if (command.equalsIgnoreCase("get_name")) {
+    Serial.println("Device name: " + deviceName);
+  }
+  else if (command.startsWith("upload:")) {
+    handleUpload(command);
+  }
 }
 
 void setup() {
-  // Initialize serial communication
   Serial.begin(115200);
-
-  // Set LED to be an output pin
   pinMode(led, OUTPUT);
-
-  // Initialize EEPROM with size 512 bytes for Arduino boards without commit requirement
-  EEPROM.begin(512); // Uncomment for boards that need it
-
-  // Read the device name from EEPROM
+  EEPROM.begin(512);
   readDeviceName();
+
+  if (CAN.begin(CAN_500KBPS) != CAN_OK) {
+    Serial.println("CAN BUS FAIL!");
+    while (1);
+  }
+  Serial.println("CAN BUS OK!");
+
+  CAN.init_Mask(0, 0, 0x3ff);
+  CAN.init_Mask(1, 0, 0x3ff);
 }
 
 void loop() {
-  // Check if any serial data is available
   if (Serial.available() > 0) {
-    // Read the incoming byte
     String command = Serial.readStringUntil('\n');
     handleCommand(command);
+  }
+
+  if (CAN_MSGAVAIL == CAN.checkReceive()) {
+    unsigned char len = 0;
+    unsigned char buf[8];
+    CAN.readMsgBuf(&len, buf);
+    unsigned long canId = CAN.getCanId();
+
+    // Check CAN ID against selected IDs
+    if (numSelectedIds > MAX_HW_FILTERS) {
+      // Software filtering
+      bool idMatch = false;
+      for (int i = 0; i < numSelectedIds; i++) {
+        if (canId == selectedIds[i]) {
+          idMatch = true;
+          break;
+        }
+      }
+      if (!idMatch) return;  // Ignore if ID doesn't match any in the array
+    }
+
+    // If using hardware filters or ID matches, process the message
+    Serial.println("Received CAN message:");
+    Serial.print("ID: 0x");
+    Serial.println(canId, HEX);
+    for (int i = 0; i < len; i++) {
+      Serial.print("0x");
+      Serial.print(buf[i], HEX);
+      Serial.print("\t");
+    }
+    Serial.println();
   }
 }
