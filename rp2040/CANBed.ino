@@ -167,14 +167,14 @@ void loop() {
     }
 
     // If using hardware filters or ID matches, process the message
-    Serial.println("Received CAN message:");
-    Serial.print("ID: 0x");
-    Serial.println(canId, HEX);
+    Serial.print("recv:");
+    Serial.print(canId, HEX);
+    Serial.print("#"); // Add the '#' separator
     for (int i = 0; i < len; i++) {
-      Serial.print("0x");
-      Serial.print(buf[i], HEX);
-      Serial.print("\t");
+      if (buf[i] < 0x10) Serial.print("0"); // Zero-pad single-digit hex values
+      Serial.print(buf[i], HEX); // Print the data in hexadecimal
     }
+    Serial.print(":endrecv");
     Serial.println();
   }
 }
