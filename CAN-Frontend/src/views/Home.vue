@@ -1,58 +1,215 @@
-<!-- <template>
-    <div>
-      <h1>Home</h1>
-      <p>Welcome to the home page!</p>
-      <router-link to="/connect">Connect to a Device</router-link>
-    </div>
-  </template> -->
 <template>
   <div>
     <h1>Upload CANdump File</h1>
     <form>
       <input @change="uploadFile" type="file" />
     </form>
-    <!-- <p v-if="uploadStatus">{{ uploadStatus }}</p> -->
-    <p>Unassigned CAN IDs: {{ uniqueIds.length }}</p>
-    <div v-if="ports.length > 0">
-      <h2>Nodes</h2>
-      <ul>
-        <li v-for="(port, index) in portData" :key="index">
-          <strong>{{ port.name }}</strong> <!-- {{ node.description }} -->
-          <div>
-            <label for="selectIds">Select IDs:</label>
-            <Multiselect @select="handleSelect" @deselect="handleDeselect" v-model="selectedIds[index]" mode="tags"
-              :searchable=true :options="uniqueIds" placeholder="Select CAN IDs" label="ID" track-by="ID"
-              :show-labels="false" />
-          </div>
-          <button @click="selectRemainingIds(index)">Select remaining CAN IDs</button>
-        </li>
-      </ul>
+    <div>
+      <button @click="beginSimulation">Begin Simulation</button>
     </div>
-    <button @click="uploadToECUs">Upload to ECUs</button>
+    <h1>Serial Consoles</h1>
+    <div v-if="serialPorts.length === 0">
+      <p>No serial ports connected.</p>
+    </div>
+    <div v-for="(port, index) in serialPorts" :key="port.info">
+      <h2>Console {{ index + 1 }} - {{ port.deviceName || 'Unknown Device' }}</h2>
+      <div>
+        <textarea v-model="port.consoleOutput" rows="10" cols="50" readonly></textarea>
+      </div>
+      <input v-model="port.inputData" type="text" placeholder="Type a message..." />
+      <div>
+        <label for="selectIds">Select up to 6 IDs:</label>
+        <Multiselect @select="handleSelect" @deselect="handleDeselect" v-model="selectedIds[index]" mode="tags"
+          :searchable=true :options="uniqueIds" placeholder="Select CAN IDs" label="ID" track-by="ID"
+          :show-labels="false" :max="6" />
+      </div>
+      <div>
+        <MessageStatus ref="messageStatus" :messages="port.messages" />
+      </div>
+      <!-- Button to upload selected IDs to ECUs -->
+      <button @click="uploadToECU(index)">Upload to ECUs</button>
+      <button @click="sendData(port, index)">Send</button>
+      <button @click="closePort(port, index)">Close Port</button>
+      <button @click="uploadToSender">Upload to Sender</button>
+    </div>
   </div>
 </template>
 
 
 <script>
 import Multiselect from '@vueform/multiselect';
+import MessageStatus from '@/components/MessageStatus.vue';
 import '@vueform/multiselect/themes/default.css';
 
 export default {
   components: {
-    Multiselect
+    Multiselect,
+    MessageStatus,
   },
   data() {
     return {
-      ports: [],
-      portData: [],
-      canData: {},
-      uniqueIds: [],
-      selectedIds: [],
-      fileContent: null,
+      serialPorts: [], // List of connected serial ports
+      fileContent: "", // Content of the uploaded file
+      canData: null, // Parsed CAN data from the uploaded file
+      canMessages: [], // Array to store the CAN messages
+      uniqueIds: [], // Unique CAN IDs from the uploaded file
+      error: "", // Error message for file processing
     };
   },
-
+  async mounted() {
+    await this.loadPreviouslyConnectedPorts();
+  },
   methods: {
+    // Load previously connected ports and establish connections
+    async loadPreviouslyConnectedPorts() {
+      if ("serial" in navigator) {
+        try {
+          const ports = await navigator.serial.getPorts();
+          this.selectedIds = this.loadSelectedIds(ports.length);
+          for (const port of ports) {
+            this.connectPort(port);
+          }
+        } catch (error) {
+          console.error("Error loading previously connected ports:", error);
+        }
+      } else {
+        alert("Web Serial API is not supported in this browser.");
+      }
+    },
+
+    // Connect to a specific port and retrieve its name
+    async connectPort(port) {
+      try {
+        await port.open({ baudRate: 115200 });
+        const textDecoder = new TextDecoderStream();
+        const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+        const reader = textDecoder.readable.getReader();
+
+        // Add port to the serialPorts array with console and input data
+        const serialPortData = {
+          port,
+          reader,
+          consoleOutput: "",
+          inputData: "",
+          deviceName: null, // Initially, device name is unknown
+          buffer: "",
+          messages: [],
+        };
+        this.serialPorts.push(serialPortData);
+
+        // Send "get_name" to retrieve the device name
+        this.sendGetNameCommand(port, serialPortData);
+
+        // Continuously read data from the port
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          if (value) {
+            this.processIncomingData(port, value);
+          }
+        }
+      } catch (error) {
+        console.error("Error connecting to port:", error);
+      }
+    },
+
+    // Send "get_name" command to get the device name
+    async sendGetNameCommand(port, portData) {
+      try {
+        const textEncoder = new TextEncoder();
+        const writer = port.writable.getWriter();
+        await writer.write(textEncoder.encode("get_name\n"));
+        writer.releaseLock();
+      } catch (error) {
+        console.error("Error sending get_name command:", error);
+      }
+    },
+
+    // Method to upload the selected IDs to the ECU
+    async uploadToECU(index) {
+      const selected = this.selectedIds[index];
+      // Filter the CAN messages based on the selected IDs, put into the format id#data
+      let ecuMessages = this.canMessages
+        .filter((message) => selected.includes(message.id))
+        .map((message) => ({ text: `${message.id}#${message.data}`, status: "unreceived" }));
+      this.serialPorts[index].messages = ecuMessages;
+      if (selected.length === 0) {
+        alert('No CAN IDs selected.');
+        return;
+      }
+
+      // Format the message as required: "upload:["XXX","XXX","XXX"]:end"
+      const formattedMessage = `upload:[${selected.map(id => `"${id}"`).join(',')}]:end`;
+
+      // Get the port for the corresponding index
+      const portData = this.serialPorts[index];
+
+      try {
+        // Send the formatted message to the ECU via the serial port
+        const textEncoder = new TextEncoder();
+        const writer = portData.port.writable.getWriter();
+        await writer.write(textEncoder.encode(formattedMessage + "\n"));
+        writer.releaseLock();
+        this.serialPorts[index].consoleOutput += `\nYou: ${formattedMessage}\n`;
+      } catch (error) {
+        console.error("Error uploading to ECU:", error);
+      }
+    },
+
+    // Process incoming data and check if it contains the device name
+    processIncomingData(port, value) {
+      const portData = this.serialPorts.find((p) => p.port === port);
+      if (value.includes("Device name: ")) {
+        const deviceName = value.split("Device name: ")[1].trim();
+        portData.deviceName = deviceName;
+        return;
+      }
+      portData.consoleOutput += value;
+      portData.buffer += value;
+
+      // Check for and process complete messages
+      let startIndex = portData.buffer.indexOf("recv:");
+      let endIndex = portData.buffer.indexOf(":endrecv", startIndex);
+
+      while (startIndex !== -1 && endIndex !== -1) {
+        // Extract the complete message
+        const completeMessage = portData.buffer.slice(startIndex, endIndex + 8); // Include ':endrecv'
+
+        // Process the message
+        this.processReceivedMessage(portData, completeMessage);
+
+        // Remove the processed message from the buffer
+        portData.buffer = portData.buffer.slice(endIndex + 8);
+
+        // Look for the next complete message
+        startIndex = portData.buffer.indexOf("recv:");
+        endIndex = portData.buffer.indexOf(":endrecv", startIndex);
+      }
+    },
+
+    // Process the received message and update the status
+    processReceivedMessage(portData, message) {
+      console.log("Received message:", message);
+      const messageContent = message.slice(5, message.length - 8); // Remove 'recv:' and ':endrecv'
+      const messageIndex = portData.messages.findIndex((m) => m.text === messageContent && m.status === "unreceived");
+      if (messageIndex !== -1) {
+        portData.messages[messageIndex].status = "received";
+      }
+      else {
+        portData.messages.push({ text: messageContent, status: "unexpected" });
+      }
+    },
+
+    saveSelectedIds() {
+      localStorage.setItem('selectedIds', JSON.stringify(this.selectedIds));
+    },
+    loadSelectedIds(length) {
+      const savedIds = localStorage.getItem('selectedIds');
+      return savedIds ? JSON.parse(savedIds) : Array(length).fill([]);
+    },
+
     handleSelect(value) {
       let index = this.uniqueIds.indexOf(value);
       if (index !== -1) {
@@ -66,6 +223,34 @@ export default {
       this.saveSelectedIds();
     },
 
+    // Send data to the serial port
+    async sendData(portData, index) {
+      const { port, inputData } = portData;
+      if (inputData.trim() === "") return;
+      try {
+        const textEncoder = new TextEncoder();
+        const writer = port.writable.getWriter();
+        await writer.write(textEncoder.encode(inputData + "\n"));
+        writer.releaseLock();
+        this.serialPorts[index].consoleOutput += "You: " + inputData;
+        this.serialPorts[index].inputData = ""; // Clear input field
+      } catch (error) {
+        console.error("Error sending data:", error);
+      }
+    },
+
+    // Close the serial port connection
+    async closePort(portData, index) {
+      try {
+        await portData.port.close();
+        portData.reader.releaseLock();
+        this.serialPorts.splice(index, 1);
+      } catch (error) {
+        console.error("Error closing the port:", error);
+      }
+    },
+
+    // Upload a CANdump file
     uploadFile(event) {
       const file = event.target.files[0];
       if (!file) {
@@ -81,6 +266,7 @@ export default {
       reader.readAsText(file);
     },
 
+    // Process the uploaded file
     processFile(fileContent) {
       try {
         this.canData = this.parseCandumpFile(fileContent);
@@ -92,21 +278,6 @@ export default {
         console.error(err);
       }
     },
-
-    // parseCandumpFile(content) {
-    //   const canIds = new Set();
-    //   const lines = content.split('\n');
-    //   lines.forEach((line) => {
-    //     const parts = line.trim().split(/\s+/);
-    //     if (parts.length > 2) {
-    //       // Example line format: (1290000000.000000) can0 585#0040000000020018
-    //       const canId = parts[2].split('#')[0]; // Extract CAN ID before the #
-    //       canIds.add(canId);
-    //     }
-    //   });
-    //   return Array.from(canIds); // Convert Set to Array
-    // },
-
 
     parseCandumpFile(content) {
       const canData = {}; // Object to store the transformed data
@@ -139,145 +310,144 @@ export default {
             timestamp: relativeTimestamp, // Use relative timestamp
             data: data || '' // Data part (after #), default to an empty string if missing
           });
+
+          // this.canMessages.push(`${canId}#${data}`);
+          this.canMessages.push({ timestamp: relativeTimestamp, id: canId, data: data });
         }
       });
 
       return canData; // Return the transformed object with relative timestamps
     },
 
-    async getPreviouslyConnectedPorts() {
-      try {
-        this.ports = await navigator.serial.getPorts();
-        this.portData = Array(this.ports.length).fill({ name: '', status: 'Checking...' });
-        this.selectedIds = this.loadSelectedIds(this.ports.length);
-        for (let i = 0; i < this.ports.length; i++) {
-          console.log(`Checking port ${i}`);
-          await this.checkIfFlashed(this.ports[i], i);
-        }
-      } catch (error) {
-        console.error('Failed to get previously connected ports:', error);
+    async uploadToSender() {
+      console.log('Uploading to Sender...');
+      const senderPort = this.serialPorts.find((port) => port.deviceName === "Sender");
+
+      if (!senderPort) {
+        console.error('No port named "Sender" found.');
+        return;
       }
-    },
-    async checkIfFlashed(port, index) {
+
+      const textEncoder = new TextEncoder();
+      const writer = senderPort.port.writable.getWriter();
+
       try {
-        // Only open the port if it's not already open
-        if (!port.readable || !port.writable) {
-          console.log(`Opening port ${index}`);
-          await port.open({ baudRate: 115200 });
+        // Send data in smaller chunks
+        const chunkSize = 1024; // Adjust chunk size as needed
+        const jsonString = "upload:" + JSON.stringify(this.canMessages) + ":end\n";
+        let offset = 0;
+
+        while (offset < jsonString.length) {
+          const chunk = jsonString.slice(offset, offset + chunkSize);
+          console.log(chunk)
+          await writer.write(textEncoder.encode(chunk + "\n"));
+          offset += chunkSize;
         }
 
-        const writer = port.writable.getWriter();
-        const data = new TextEncoder().encode("get_name\n");
-        console.log(`Sending command to port ${index}`);
-        await writer.write(data);
+        console.log(`Sent messages to Sender`);
         writer.releaseLock();
-
-        const reader = port.readable.getReader();
-        const timeout = 10000; // Timeout in milliseconds (2 seconds)
-        const timeoutPromise = new Promise((resolve) => setTimeout(resolve, timeout, { done: true }));
-
-        // Attempt to read from the port, but with a timeout
-        const { value, done } = await Promise.race([reader.read(), timeoutPromise]);
-        reader.releaseLock();
-
-        if (done || !value) {
-          console.log(`Port ${index} - No response within timeout, marking as 'Not Flashed'`);
-          this.portData[index].status = 'Not Flashed'; // Directly update the array
-        } else {
-          const response = new TextDecoder().decode(value).trim();
-          console.log(`Port ${index} - Received response: ${response}`);
-          if (response) {
-            this.portData[index].status = 'Flashed'; // Directly update the array
-            // Response format: "Device Name: <name>"
-            const deviceName = response.split(': ')[1];
-            this.portData[index].name = deviceName
-          } else {
-            this.portData[index].status = 'Not Flashed'; // Directly update the array
-          }
-        }
       } catch (error) {
-        console.error(`Error checking if device on port ${index} is flashed:`, error);
-        this.portData[index].status = 'Unknown'; // Directly update the array
+        console.error('Error getting writer for Sender:', error);
       }
     },
-    uploadToECUs() {
-      console.log('Uploading to ECUs');
-      const lines = this.fileContent.split('\n');
-      this.ports.forEach((port, index) => {
-        console.log(this.portData[index]);
-        if (this.portData[index].status === 'Flashed') {
-          console.log(`Uploading to port ${index}`);
-          let selectedIds = this.selectedIds[index];
-          let filteredData = {};
-          selectedIds.forEach((id) => {
-            if (this.canData[id]) {
-              filteredData[id] = this.canData[id]; // Add entries for this CAN ID if it exists in canData
-            }
-          });
-          this.uploadToECU(port, filteredData);
-        }
-      });
-    },
-    async uploadToECU(port, data) {
+
+    // Begin the simulation by sending the CAN messages to the "Sender" port
+    async beginSimulation() {
+      // Find the port named "Sender"
+      const senderPort = this.serialPorts.find((port) => port.deviceName === "Sender");
+
+      if (!senderPort) {
+        console.error('No port named "Sender" found.');
+        return;
+      }
+
+      const textEncoder = new TextEncoder();
+
+      let writer = null;
+
+      // Attempt to get a writer once and use it throughout
       try {
-        const writer = port.writable.getWriter();
-        const dataString = JSON.stringify(data);
-        const dataEncoded = new TextEncoder().encode(`upload:${dataString}:end\n`);
-
-        // Send the data to the Arduino
-        await writer.write(dataEncoded);
-        writer.releaseLock();
-        console.log('Uploaded data to ECU');
-
-        // Check for a response from the Arduino
-        const reader = port.readable.getReader();
-        const decoder = new TextDecoder();
-
-        // Timeout mechanism to prevent waiting indefinitely
-        const timeout = 5000; // 5 seconds timeout
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout waiting for ECU response')), timeout));
-
-        const responsePromise = reader.read().then(({ value, done }) => {
-          if (done || !value) {
-            throw new Error('No response from ECU');
-          }
-          return decoder.decode(value);
-        });
-
-        // Await either the response or the timeout
-        const response = await Promise.race([responsePromise, timeoutPromise]);
-
-        reader.releaseLock();
-
-        // Check the response from the Arduino
-        if (response.includes('JSON upload processed successfully')) {
-          console.log('Upload successful:', response);
-        } else if (response.includes('Failed to parse JSON')) {
-          console.error('ECU reported a JSON parsing error:', response);
-        } else {
-          console.error('Unexpected response from ECU:', response);
-        }
+        writer = senderPort.port.writable.getWriter();
       } catch (error) {
-        // Handle errors from the upload or response check
-        console.error('Failed to upload data to ECU:', error);
-        alert(`Error uploading data to ECU: ${error.message}`);
+        console.error('Error getting writer for Sender:', error);
+        return;
       }
+
+      await writer.write(textEncoder.encode("start_simulation\n"));
+      // // Process each CAN message and send it to the "Sender" port
+      // this.canMessages.forEach(async (message) => {
+      //   try {
+      //     // Send the message to the "Sender" port
+      //     await writer.write(textEncoder.encode(message + "\n"));
+      //     // console.log(`Sent message: ${message} to Sender`);
+      //   } catch (error) {
+      //     console.error('Error sending message to Sender:', error);
+      //   }
+      // });
+
+      // Ensure the writer is released after sending all messages
+      writer.releaseLock();
     },
-    selectRemainingIds(index) {
-      this.selectedIds[index] = this.uniqueIds;
-      this.uniqueIds = [];
-      this.saveSelectedIds();
-    },
-    saveSelectedIds() {
-      localStorage.setItem('selectedIds', JSON.stringify(this.selectedIds));
-    },
-    loadSelectedIds(length) {
-      const savedIds = localStorage.getItem('selectedIds');
-      return savedIds ? JSON.parse(savedIds) : Array(length).fill([]);
-    }
-  },
-  mounted() {
-    this.getPreviouslyConnectedPorts();
+
+    // Parse the uploaded file content
+    //   parseCandumpFile(content) {
+    //     const lines = content.split('\n');
+    //     // Find the port named "Sender"
+    //     const senderPort = this.serialPorts.find((port) => port.deviceName === "Sender");
+
+    //     if (!senderPort) {
+    //       console.error('No port named "Sender" found.');
+    //       return;
+    //     }
+
+    //     // const textEncoder = new TextEncoder();
+
+    //     // let writer = null;
+
+    //     // // Attempt to get a writer once and use it throughout
+    //     // try {
+    //     //   writer = senderPort.port.writable.getWriter();
+    //     // } catch (error) {
+    //     //   console.error('Error getting writer for Sender:', error);
+    //     //   return;
+    //     // }
+
+    //     // Process each line in the CAN dump file
+    //     lines.forEach(async (line) => {
+    //       const parts = line.trim().split(/\s+/);
+
+    //       if (parts.length > 2) {
+    //         // Example line format: (1290000000.000000) can0 585#0040000000020018
+    //         const [canId, data] = parts[2].split('#'); // Split CAN ID and data
+
+    //         // Construct the message to send: `${canId}#${data}`
+    //         const message = `${canId}#${data}`;
+
+    //         // try {
+    //         //   // Send the message to the "Sender" port
+    //         //   await writer.write(textEncoder.encode(message + "\n"));
+    //         //   console.log(`Sent message: ${message} to Sender`);
+    //         // } catch (error) {
+    //         //   console.error('Error sending message to Sender:', error);
+    //         // }
+    //       }
+    //     });
+
+    //     // Ensure the writer is released after sending all messages
+    //     // writer.releaseLock();
+    //   },
   },
 };
 </script>
+
+<style>
+textarea {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+input {
+  width: calc(100% - 100px);
+  margin-right: 10px;
+}
+</style>
