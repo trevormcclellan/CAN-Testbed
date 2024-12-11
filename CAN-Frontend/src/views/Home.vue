@@ -1,5 +1,44 @@
 <template>
   <div>
+    <div>
+      <button @click="showModal = true">Open Modal</button>
+      <Modal v-model:visible="showModal">
+        <div class="attack-config">
+          <h2>Select an Attack Type</h2>
+          <div class="select-container">
+            <label for="attackType">Attack Type:</label>
+            <select id="attackType" v-model="attack.type" class="styled-select">
+              <option value="replay">Replay</option>
+            </select>
+          </div>
+          <div v-if="attack.type === 'replay'" class="replay-config">
+            <h3>Replay Attack Configuration</h3>
+            <form @submit.prevent="configureReplay">
+              <div class="form-group">
+                <label for="message">Message (ID#DATA):</label>
+                <input id="message" type="text" placeholder="Enter the message" v-model="replayConfig.message" />
+              </div>
+              <div class="form-group">
+                <label for="repeat">Repeat:</label>
+                <input id="repeat" type="number" min="1" placeholder="Enter the number of times"
+                  v-model.number="replayConfig.repeat" />
+              </div>
+              <div class="form-group">
+                <label for="interval">Interval (ms):</label>
+                <input id="interval" type="number" min="0" placeholder="Enter the interval"
+                  v-model.number="replayConfig.interval" />
+              </div>
+              <div class="form-group">
+                <label for="startTime">Start Time (ms):</label>
+                <input id="startTime" type="number" min="0" placeholder="Enter the start time"
+                  v-model.number="replayConfig.startTime" />
+              </div>
+              <button type="submit" class="configure-button">Configure</button>
+            </form>
+          </div>
+        </div>
+      </Modal>
+    </div>
     <h1>Upload CANdump File</h1>
     <form>
       <input @change="uploadFile" type="file" />
@@ -31,6 +70,7 @@
       <button @click="sendData(port, index)">Send</button>
       <button @click="closePort(port, index)">Close Port</button>
       <button @click="uploadToSender">Upload to Sender</button>
+      <button @click="configureAttack(port)">Configure Attack</button>
     </div>
   </div>
 </template>
@@ -39,12 +79,14 @@
 <script>
 import Multiselect from '@vueform/multiselect';
 import MessageStatus from '@/components/MessageStatus.vue';
+import Modal from '@/components/Modal.vue';
 import '@vueform/multiselect/themes/default.css';
 
 export default {
   components: {
     Multiselect,
     MessageStatus,
+    Modal,
   },
   data() {
     return {
@@ -54,6 +96,18 @@ export default {
       canMessages: [], // Array to store the CAN messages
       uniqueIds: [], // Unique CAN IDs from the uploaded file
       error: "", // Error message for file processing
+      showModal: false,
+      attack: {
+        type: null,
+        port: null,
+      },
+      replayConfig: {
+        message: "",
+        repeat: 1,
+        interval: 0,
+        startTime: 0,
+      },
+      simulationStartTime: null,
     };
   },
   async mounted() {
@@ -133,7 +187,7 @@ export default {
       // Filter the CAN messages based on the selected IDs, put into the format id#data
       let ecuMessages = this.canMessages
         .filter((message) => selected.includes(message.id))
-        .map((message) => ({ text: `${message.id}#${message.data}`, status: "unreceived" }));
+        .map((message) => ({ text: `${message.id}#${message.data}`, status: "unreceived", timestamp: null }));
       this.serialPorts[index].messages = ecuMessages;
       if (selected.length === 0) {
         alert('No CAN IDs selected.');
@@ -192,13 +246,15 @@ export default {
     // Process the received message and update the status
     processReceivedMessage(portData, message) {
       console.log("Received message:", message);
+      const timestamp = Date.now() - this.simulationStartTime;
       const messageContent = message.slice(5, message.length - 8); // Remove 'recv:' and ':endrecv'
       const messageIndex = portData.messages.findIndex((m) => m.text === messageContent && m.status === "unreceived");
       if (messageIndex !== -1) {
         portData.messages[messageIndex].status = "received";
+        portData.messages[messageIndex].timestamp = timestamp;
       }
       else {
-        portData.messages.push({ text: messageContent, status: "unexpected" });
+        portData.messages.push({ text: messageContent, status: "unexpected", timestamp });
       }
     },
 
@@ -319,6 +375,35 @@ export default {
       return canData; // Return the transformed object with relative timestamps
     },
 
+    // Configure the attack
+    configureAttack(port) {
+      this.attack.port = port;
+      this.showModal = true;
+    },
+
+    configureReplay() {
+      // Send the replay configuration to the attack port
+      const { message, repeat, interval, startTime } = this.replayConfig;
+      const { port } = this.attack;
+      if (!port) {
+        console.error('No attack port selected.');
+        return;
+      }
+
+      const textEncoder = new TextEncoder();
+      const writer = port.port.writable.getWriter();
+
+      try {
+        const replayMessage = `replay:${message}:${repeat}:${interval}:${startTime}:endreplay\n`;
+        writer.write(textEncoder.encode(replayMessage));
+        writer.releaseLock();
+        console.log(`Replay configuration sent to ${port.deviceName}`);
+        this.showModal = false;
+      } catch (error) {
+        console.error('Error configuring replay attack:', error);
+      }
+    },
+
     async uploadToSender() {
       console.log('Uploading to Sender...');
       const senderPort = this.serialPorts.find((port) => port.deviceName === "Sender");
@@ -374,6 +459,7 @@ export default {
       }
 
       await writer.write(textEncoder.encode("start_simulation\n"));
+      this.simulationStartTime = Date.now();
       // // Process each CAN message and send it to the "Sender" port
       // this.canMessages.forEach(async (message) => {
       //   try {
@@ -449,5 +535,55 @@ textarea {
 input {
   width: calc(100% - 100px);
   margin-right: 10px;
+}
+</style>
+
+<style scoped>
+.attack-config {
+  font-family: Arial, sans-serif;
+  margin: 20px;
+}
+
+.select-container,
+.replay-config .form-group {
+  margin-bottom: 15px;
+}
+
+label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: bold;
+}
+
+.styled-select,
+input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.configure-button {
+  background-color: #007bff;
+  color: white;
+  padding: 10px 15px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.configure-button:hover {
+  background-color: #0056b3;
 }
 </style>

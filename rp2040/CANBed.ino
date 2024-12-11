@@ -12,6 +12,16 @@ const int MAX_HW_FILTERS = 6;  // MCP2515 supports 6 filters
 int selectedIds[20];           // Example size for selected IDs (can hold up to 20)
 int numSelectedIds = 0;
 
+// Replay configuration
+String replayId;
+String replayData;
+int replayRepeat = 0;
+int replayInterval = 0;
+int replayStartTime = 0;
+bool replayConfigured = false;
+bool replayTriggered = false;
+unsigned long firstCanMessageTime = 0;
+
 // Function to read device name from EEPROM
 void readDeviceName() {
   char name[100];
@@ -80,6 +90,62 @@ void handleUpload(String command) {
   }
 }
 
+void handleReplayAttack(String command) {
+  command.replace("replay:", "");
+  command.replace(":endreplay", "");
+
+  int firstColon = command.indexOf(':');
+  int secondColon = command.indexOf(':', firstColon + 1);
+  int thirdColon = command.indexOf(':', secondColon + 1);
+
+  if (firstColon == -1 || secondColon == -1 || thirdColon == -1) {
+    Serial.println("Invalid replay command format.");
+    return;
+  }
+
+  String message = command.substring(0, firstColon);
+  replayId = message.substring(0, message.indexOf('#'));
+  replayData = message.substring(message.indexOf('#') + 1);
+  replayRepeat = command.substring(firstColon + 1, secondColon).toInt();
+  replayInterval = command.substring(secondColon + 1, thirdColon).toInt();
+  replayStartTime = command.substring(thirdColon + 1, command.length()).toInt();
+  replayConfigured = true;
+  replayTriggered = false;
+
+  Serial.println("Replay configuration set:");
+  Serial.println("ID: " + replayId);
+  Serial.println("Data: " + replayData);
+  Serial.println("Repeat: " + String(replayRepeat));
+  Serial.println("Interval: " + String(replayInterval) + " ms");
+  Serial.println("Start Time: " + String(replayStartTime) + " ms");
+}
+
+void executeReplay() {
+  Serial.println("Starting replay...");
+  unsigned char buf[8];
+  int messageLen = replayData.length() / 2; // Each byte is two hex chars
+
+  // Parse the replay data into the buffer
+  for (int i = 0; i < messageLen && i < 8; i++) {
+    String byteStr = replayData.substring(i * 2, i * 2 + 2);
+    buf[i] = strtol(byteStr.c_str(), NULL, 16);
+  }
+
+  unsigned long replayIdValue = strtol(replayId.c_str(), NULL, 16);
+
+  for (int i = 0; i < replayRepeat; i++) {
+    // Send CAN message
+    if (CAN.sendMsgBuf(replayIdValue, 0, messageLen, buf) == CAN_OK) {
+      Serial.println("Replay message sent.");
+    } else {
+      Serial.println("Error sending replay message.");
+    }
+
+    delay(replayInterval);
+  }
+  Serial.println("Replay complete.");
+}
+
 // Function to set hardware filters
 void setupHardwareFilters() {
   Serial.println("Setting up hardware filters:");
@@ -123,6 +189,9 @@ void handleCommand(String command) {
   else if (command.startsWith("upload:")) {
     handleUpload(command);
   }
+  else if (command.startsWith("replay:")) {
+    handleReplayAttack(command);
+  }
 }
 
 void setup() {
@@ -163,7 +232,7 @@ void loop() {
           break;
         }
       }
-      if (!idMatch) return;  // Ignore if ID doesn't match any in the array
+      if (!idMatch) return; // Ignore if ID doesn't match any in the array
     }
 
     // If using hardware filters or ID matches, process the message
@@ -174,7 +243,18 @@ void loop() {
       if (buf[i] < 0x10) Serial.print("0"); // Zero-pad single-digit hex values
       Serial.print(buf[i], HEX); // Print the data in hexadecimal
     }
-    Serial.print(":endrecv");
-    Serial.println();
+    Serial.println(":endrecv");
+
+    // Handle replay logic
+    if (replayConfigured && !replayTriggered) {
+      replayTriggered = true;
+      firstCanMessageTime = millis();
+    }
+
+    if (replayTriggered && (millis() - firstCanMessageTime >= replayStartTime)) {
+      replayTriggered = false; // Reset after replay
+      replayConfigured = false;
+      executeReplay();
+    }
   }
 }

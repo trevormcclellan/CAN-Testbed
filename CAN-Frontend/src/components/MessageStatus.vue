@@ -4,6 +4,7 @@
         <!-- Loop through the messages and display each with its corresponding status -->
         <li v-for="(message, index) in messages" :key="index">
           <span>{{ message.text }}</span>
+          <span v-if="message.timestamp">({{ message.timestamp }}ms)</span>
           <span v-if="message.status === 'received'">✔️</span>
           <span v-if="message.status === 'unexpected'">❗</span>
         </li>
