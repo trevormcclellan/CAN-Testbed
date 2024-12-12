@@ -215,6 +215,13 @@ void storeMessage(unsigned long canId, unsigned char* data, int dataLength, unsi
   }
 }
 
+void transformData(unsigned char* transformedData, unsigned char* data, int dataLength) {
+  // Add code here to transform the data before sending
+  for (int i = 0; i < dataLength; i++) {
+    transformedData[i] = data[i];
+  }
+}
+
 void startSimulation() {
   if (numMessages == 0) {
     Serial.println("No messages to replay.");
@@ -238,7 +245,10 @@ void startSimulation() {
       unsigned char* data = messageBuffer[i].data;
       int dataLength = messageBuffer[i].dataLength;
 
-      byte sndStat = CAN.sendMsgBuf(canId, 0, dataLength, data);
+      unsigned char transformedData[8];
+      transformData(transformedData, data, dataLength); // Transform the data before sending
+
+      byte sndStat = CAN.sendMsgBuf(canId, 0, dataLength, transformedData);
 
       if (sndStat == CAN_OK) {
         Serial.print("Replaying message with CAN ID 0x");
@@ -248,9 +258,6 @@ void startSimulation() {
         Serial.println("Error replaying message.");
       }
     }
-
-    
-    
   }
 
   Serial.println("Simulation completed.");

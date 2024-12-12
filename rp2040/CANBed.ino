@@ -194,6 +194,13 @@ void handleCommand(String command) {
   }
 }
 
+void transformData(unsigned char* transformedData, unsigned char* data, int dataLength) {
+  // Add code here to transform the data before sending
+  for (int i = 0; i < dataLength; i++) {
+    transformedData[i] = data[i];
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(led, OUTPUT);
@@ -222,6 +229,10 @@ void loop() {
     CAN.readMsgBuf(&len, buf);
     unsigned long canId = CAN.getCanId();
 
+    // Transform the data before processing
+    unsigned char transformedData[8];
+    transformData(transformedData, buf, len);
+
     // Check CAN ID against selected IDs
     if (numSelectedIds > MAX_HW_FILTERS) {
       // Software filtering
@@ -240,8 +251,8 @@ void loop() {
     Serial.print(canId, HEX);
     Serial.print("#"); // Add the '#' separator
     for (int i = 0; i < len; i++) {
-      if (buf[i] < 0x10) Serial.print("0"); // Zero-pad single-digit hex values
-      Serial.print(buf[i], HEX); // Print the data in hexadecimal
+      if (transformedData[i] < 0x10) Serial.print("0"); // Zero-pad single-digit hex values
+      Serial.print(transformedData[i], HEX); // Print the data in hexadecimal
     }
     Serial.println(":endrecv");
 
