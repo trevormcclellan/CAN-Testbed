@@ -6,8 +6,8 @@
 <template>
   <div>
     <nav>
-      <router-link to="/">Home</router-link>
-      <router-link to="/connect">Connect Device</router-link>
+      <a href="/">Home</a>
+      <a href="/connect">Connect Device</a>
     </nav>
     <router-view></router-view> <!-- This is where your components will be rendered -->
   </div>

@@ -43,6 +43,12 @@ export default {
       deviceName: '',
     };
   },
+  async beforeUnmount() {
+    console.log("Closing all ports...");
+    this.ports.forEach((portData) => {
+      this.closePort(portData);
+    });
+  },
   methods: {
     async addDevice() {
       if (!this.deviceName) {
@@ -67,6 +73,11 @@ export default {
         await writer.write(data);
         console.log('Sent "set_name" command to port');
         writer.releaseLock();
+
+        this.ports.push(port);
+        this.portStatuses.push('Checking...');
+        this.portData.push({ name: '' });
+        await this.checkIfFlashed(port, this.ports.length - 1);
       } catch (error) {
         console.error('Failed to send "set_name" command:', error);
       }
@@ -170,7 +181,15 @@ export default {
       const vendorId = info.usbVendorId ? `Vendor ID: ${info.usbVendorId}` : 'Unknown Vendor';
       const productId = info.usbProductId ? `Product ID: ${info.usbProductId}` : 'Unknown Product';
       return `${vendorId} - ${productId}`;
-    }
+    },
+    async closePort(port) {
+      try {
+        await port.close();
+        console.log('Port closed:', port);
+      } catch (error) {
+        console.error('Failed to close port:', error);
+      }
+    },
   },
   mounted() {
     this.getPreviouslyConnectedPorts();

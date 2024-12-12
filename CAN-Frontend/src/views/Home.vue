@@ -1,7 +1,6 @@
 <template>
   <div>
     <div>
-      <button @click="showModal = true">Open Modal</button>
       <Modal v-model:visible="showModal">
         <div class="attack-config">
           <h2>Select an Attack Type</h2>
@@ -44,7 +43,9 @@
       <input @change="uploadFile" type="file" />
     </form>
     <div>
-      <button @click="beginSimulation">Begin Simulation</button>
+      <button @click="uploadToSender">Upload Dump to Sender</button>
+      <button @click="uploadToECUs">Upload IDs to ECUs</button> <br>
+      <button @click="beginSimulation">{{ simulationStartTime ? 'Restart' : 'Start' }} Simulation</button>
     </div>
     <h1>Serial Consoles</h1>
     <div v-if="serialPorts.length === 0">
@@ -66,10 +67,9 @@
         <MessageStatus ref="messageStatus" :messages="port.messages" />
       </div>
       <!-- Button to upload selected IDs to ECUs -->
-      <button @click="uploadToECU(index)">Upload to ECUs</button>
+      <!-- <button @click="uploadToECU(index)">Upload to ECU</button> -->
       <button @click="sendData(port, index)">Send</button>
-      <button @click="closePort(port, index)">Close Port</button>
-      <button @click="uploadToSender">Upload to Sender</button>
+      <button @click="closePort(port)">Close Port</button>
       <button @click="configureAttack(port)">Configure Attack</button>
     </div>
   </div>
@@ -113,6 +113,12 @@ export default {
   async mounted() {
     await this.loadPreviouslyConnectedPorts();
   },
+  async beforeUnmount() {
+    console.log("Closing all ports...");
+    this.serialPorts.forEach((portData) => {
+      this.closePort(portData);
+    });
+  },
   methods: {
     // Load previously connected ports and establish connections
     async loadPreviouslyConnectedPorts() {
@@ -133,7 +139,7 @@ export default {
 
     // Connect to a specific port and retrieve its name
     async connectPort(port) {
-      try {
+      try {    
         await port.open({ baudRate: 115200 });
         const textDecoder = new TextDecoderStream();
         const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
@@ -179,6 +185,15 @@ export default {
       } catch (error) {
         console.error("Error sending get_name command:", error);
       }
+    },
+
+    // Upload the selected CAN IDs to all connected ECU ports that have selected IDs
+    async uploadToECUs() {
+      this.serialPorts.forEach((portData, index) => {
+        if (this.selectedIds[index].length > 0) {
+          this.uploadToECU(index);
+        }
+      });
     },
 
     // Method to upload the selected IDs to the ECU
@@ -295,15 +310,41 @@ export default {
       }
     },
 
-    // Close the serial port connection
-    async closePort(portData, index) {
+    async closePort(portData) {
+      const { port, reader } = portData;
+
       try {
-        await portData.port.close();
-        portData.reader.releaseLock();
-        this.serialPorts.splice(index, 1);
+        // Cancel the reader if it exists
+        if (reader) {
+          try {
+            console.log("Cancelling reader...");
+            await reader.cancel(); // This will stop any pending read operations
+            reader.releaseLock();  // Release the lock on the reader
+          } catch (error) {
+            console.warn("Error cancelling reader:", error);
+          }
+        }
+
+        // Close the writable stream
+        if (port.writable) {
+          try {
+            console.log("Closing writable stream...");
+            const writer = port.writable.getWriter();
+            writer.releaseLock();
+          } catch (error) {
+            console.warn("Error releasing writer lock:", error);
+          }
+        }
+
+        // Finally, close the port
+        await port.close();
+        console.log("Port successfully closed.");
       } catch (error) {
-        console.error("Error closing the port:", error);
+        console.error("Error closing port:", error);
       }
+
+      // Remove the port from the serialPorts array
+      this.serialPorts = this.serialPorts.filter(p => p.port !== port);
     },
 
     // Upload a CANdump file
@@ -438,6 +479,17 @@ export default {
 
     // Begin the simulation by sending the CAN messages to the "Sender" port
     async beginSimulation() {
+      if (this.simulationStartTime) {
+        // Reset messages to unreceived state and delete unexpected messages
+        this.serialPorts.forEach((port) => {
+          port.messages = port.messages.filter((message) => message.status !== "unexpected");
+          port.messages.forEach((message) => {
+            message.status = "unreceived";
+            message.timestamp = null;
+          });
+        });
+      }
+
       // Find the port named "Sender"
       const senderPort = this.serialPorts.find((port) => port.deviceName === "Sender");
 
