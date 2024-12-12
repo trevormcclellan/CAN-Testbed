@@ -183,6 +183,8 @@ void executeReplay()
 void setupHardwareFilters()
 {
     Serial.println("Setting up hardware filters:");
+    CAN.init_Mask(0, 0, 0x3ff);
+    CAN.init_Mask(1, 0, 0x3ff);
 
     for (int i = 0; i < 6; i++)
     {
@@ -270,8 +272,16 @@ void setup()
     }
     Serial.println("CAN BUS OK!");
 
-    CAN.init_Mask(0, 0, 0x3ff);
-    CAN.init_Mask(1, 0, 0x3ff);
+    CAN.init_Mask(0, 0, 0x0);
+    CAN.init_Mask(1, 0, 0x0);
+
+    for (int i = 0; i < 6; i++)
+    {
+        digitalWrite(led, HIGH);
+        delay(250);
+        digitalWrite(led, LOW);
+        delay(250);
+    }
 }
 
 void loop()

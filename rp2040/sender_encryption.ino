@@ -197,6 +197,14 @@ void setup()
             ;
     }
     Serial.println("CAN BUS OK!");
+
+    for (int i = 0; i < 6; i++)
+    {
+        digitalWrite(led, HIGH);
+        delay(250);
+        digitalWrite(led, LOW);
+        delay(250);
+    }
 }
 
 void loop()
