@@ -11,6 +11,8 @@ String deviceName;
 const int MAX_HW_FILTERS = 6; // MCP2515 supports 6 filters
 int selectedIds[20];          // Example size for selected IDs (can hold up to 20)
 int numSelectedIds = 0;
+int ignoredIds[20];           // Example size for ignored IDs (can hold up to 20)
+int numIgnoredIds = 0;
 
 // Replay configuration
 String replayId;
@@ -230,6 +232,40 @@ void handleCommand(String command)
   {
     handleReplayAttack(command);
   }
+  else if (command.startsWith("ignore:"))
+  {
+    command.replace("ignore:", "");
+    command.replace(":end", "");
+
+    StaticJsonDocument<512> doc;
+    DeserializationError error = deserializeJson(doc, command);
+
+    if (error)
+    {
+      Serial.print("Failed to parse JSON: ");
+      Serial.println(error.c_str());
+      return;
+    }
+
+    JsonArray arr = doc.as<JsonArray>();
+    numIgnoredIds = arr.size();
+
+    for (int i = 0; i < numIgnoredIds; i++)
+    {
+      // Convert each hex string ID to an integer
+      const char *hexIdStr = arr[i].as<const char *>();
+      ignoredIds[i] = strtol(hexIdStr, NULL, 16); // Convert hex string to integer
+    }
+    Serial.println("Uploaded and set ignored CAN IDs:");
+    for (int i = 0; i < numIgnoredIds; i++)
+    {
+      Serial.println(ignoredIds[i], HEX);
+    }
+  }
+  else
+  {
+    Serial.println("Unknown command: " + command);
+  }
 }
 
 void transformData(unsigned char *transformedData, unsigned char *data, int dataLength)
@@ -286,6 +322,13 @@ void loop()
     // Transform the data before processing
     unsigned char transformedData[8];
     transformData(transformedData, buf, len);
+
+    // Check if ID is in the ignored list
+    for (int i = 0; i < numIgnoredIds; i++)
+    {
+      if (canId == ignoredIds[i])
+        return; // Ignore if ID is in the ignored list
+    }
 
     // Check CAN ID against selected IDs
     if (numSelectedIds > MAX_HW_FILTERS)

@@ -2,7 +2,7 @@
   <div>
     <div>
       <Modal v-model:visible="showModal">
-        <div class="attack-config">
+        <div v-if="modalType == 'attackConfig'" class="attack-config">
           <h2>Select an Attack Type</h2>
           <div class="select-container">
             <label for="attackType">Attack Type:</label>
@@ -36,6 +36,14 @@
             </form>
           </div>
         </div>
+        <div v-else>
+          <h2>Ignore CAN IDs</h2>
+          <p>Enter the CAN IDs you want to ignore (in hexadecimal format):</p>
+          <Multiselect v-model="ignoredIDs" mode="tags" :searchable=true placeholder="Enter CAN IDs" label="ID" track-by="ID"
+            :show-labels="false" :createTag="true" :addTagOn="['enter', 'space', 'tab', ';', ',']"
+            :showOptions="false" />
+          <button @click="uploadIgnoredIDs">Save</button>
+        </div>
       </Modal>
     </div>
     <h1>Upload CANdump File</h1>
@@ -44,6 +52,7 @@
     </form>
     <div>
       <button @click="uploadToSender">Upload Dump to Sender</button>
+      <button @click="ignoreIDs">Ignore IDs</button>
       <button @click="uploadToECUs">Upload IDs to ECUs</button> <br>
       <button @click="beginSimulation">{{ simulationStartTime ? 'Restart' : 'Start' }} Simulation</button>
     </div>
@@ -97,6 +106,8 @@ export default {
       uniqueIds: [], // Unique CAN IDs from the uploaded file
       error: "", // Error message for file processing
       showModal: false,
+      modalType: '',
+      ignoredIDs: [],
       attack: {
         type: null,
         port: null,
@@ -139,7 +150,7 @@ export default {
 
     // Connect to a specific port and retrieve its name
     async connectPort(port) {
-      try {    
+      try {
         await port.open({ baudRate: 115200 });
         const textDecoder = new TextDecoderStream();
         const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
@@ -184,6 +195,35 @@ export default {
         writer.releaseLock();
       } catch (error) {
         console.error("Error sending get_name command:", error);
+      }
+    },
+
+    // Upload the ignored IDs to all connected ECU ports
+    async uploadIgnoredIDs() {
+      this.serialPorts.forEach((portData, index) => {
+        this.uploadIgnoredIDsToECU(index);
+      });
+      this.showModal = false;
+    },
+
+    // Upload the ignored IDs to the ECU
+    async uploadIgnoredIDsToECU(index) {
+      const ignored = this.ignoredIDs;
+      // Format the message as required: "ignore:["XXX","XXX","XXX"]:end"
+      const formattedMessage = `ignore:[${ignored.map(id => `"${id}"`).join(',')}]:end`;
+
+      // Get the port for the corresponding index
+      const portData = this.serialPorts[index];
+
+      try {
+        // Send the formatted message to the ECU via the serial port
+        const textEncoder = new TextEncoder();
+        const writer = portData.port.writable.getWriter();
+        await writer.write(textEncoder.encode(formattedMessage + "\n"));
+        writer.releaseLock();
+        this.serialPorts[index].consoleOutput += `\nYou: ${formattedMessage}\n`;
+      } catch (error) {
+        console.error("Error uploading ignored IDs to ECU:", error);
       }
     },
 
@@ -279,6 +319,11 @@ export default {
     loadSelectedIds(length) {
       const savedIds = localStorage.getItem('selectedIds');
       return savedIds ? JSON.parse(savedIds) : Array(length).fill([]);
+    },
+
+    ignoreIDs() {
+      this.modalType = 'ignoreIds';
+      this.showModal = true;
     },
 
     handleSelect(value) {
@@ -419,6 +464,7 @@ export default {
     // Configure the attack
     configureAttack(port) {
       this.attack.port = port;
+      this.modalType = 'attackConfig';
       this.showModal = true;
     },
 
