@@ -80,24 +80,30 @@ void handleUpload(String command)
     return;
   }
 
-  JsonArray arr = doc.as<JsonArray>();
-  numSelectedIds = arr.size();
+  JsonObject obj = doc.as<JsonObject>();
+  JsonArray ids = obj["ids"];
+  int mask = obj["mask"]; // Expecting mask as an integer
+
+  numSelectedIds = ids.size();
 
   for (int i = 0; i < numSelectedIds; i++)
   {
     // Convert each hex string ID to an integer
-    const char *hexIdStr = arr[i].as<const char *>();
+    const char *hexIdStr = ids[i].as<const char *>();
     selectedIds[i] = strtol(hexIdStr, NULL, 16); // Convert hex string to integer
   }
-  Serial.println("Uploaded and set selected CAN IDs:");
+
+  Serial.println("Uploaded selected CAN IDs and mask:");
   for (int i = 0; i < numSelectedIds; i++)
   {
     Serial.println(selectedIds[i], HEX);
   }
+  Serial.print("Mask: 0x");
+  Serial.println(mask, HEX);
 
   if (numSelectedIds <= MAX_HW_FILTERS)
   {
-    setupHardwareFilters();
+    setupHardwareFilters(mask);
   }
   else
   {
@@ -170,11 +176,11 @@ void executeReplay()
 }
 
 // Function to set hardware filters
-void setupHardwareFilters()
+void setupHardwareFilters(unsigned long mask)
 {
   Serial.println("Setting up hardware filters:");
-  CAN.init_Mask(0, 0, 0x3ff);
-  CAN.init_Mask(1, 0, 0x3ff);
+  CAN.init_Mask(0, 0, mask); // Set both masks to the same value
+  CAN.init_Mask(1, 0, mask);
 
   for (int i = 0; i < 6; i++)
   {
@@ -347,6 +353,8 @@ void loop()
         return; // Ignore if ID doesn't match any in the array
     }
 
+    unsigned long recvTime = millis();
+
     // If using hardware filters or ID matches, process the message
     Serial.print("recv:");
     Serial.print(canId, HEX);
@@ -357,6 +365,8 @@ void loop()
         Serial.print("0");                   // Zero-pad single-digit hex values
       Serial.print(transformedData[i], HEX); // Print the data in hexadecimal
     }
+    Serial.print("#");
+    Serial.print(recvTime);
     Serial.println(":endrecv");
 
     // Handle replay logic

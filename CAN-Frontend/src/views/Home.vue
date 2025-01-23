@@ -36,13 +36,26 @@
             </form>
           </div>
         </div>
-        <div v-else>
+        <div v-else-if="modalType == 'ignoreIds'">
           <h2>Ignore CAN IDs</h2>
           <p>Enter the CAN IDs you want to ignore (in hexadecimal format):</p>
           <Multiselect v-model="ignoredIDs" mode="tags" :searchable=true placeholder="Enter CAN IDs" label="ID" track-by="ID"
             :show-labels="false" :createTag="true" :addTagOn="['enter', 'space', 'tab', ';', ',']"
             :showOptions="false" />
           <button @click="uploadIgnoredIDs">Save</button>
+        </div>
+        <div v-else-if="modalType == 'maskConfig'">
+          <h2>Configure Mask</h2>
+          <p>Enter the mask value (in hexadecimal format):</p>
+          <input type="text" v-model="mask.value" placeholder="Enter the mask value" />
+          <p>Matching IDs:</p>
+          <div class="scroll-container">
+            <ul>
+              <li v-for="id in findMatchingIDs(selectedIds[mask.index], parseInt(mask.value, 16))" :key="id">{{ id }}</li>
+            </ul>
+          </div>
+          
+          <button @click="saveMaskValue">Save</button>
         </div>
       </Modal>
     </div>
@@ -51,7 +64,6 @@
       <input @change="uploadFile" type="file" />
     </form>
     <div>
-      <button @click="uploadToSender">Upload Dump to Sender</button>
       <button @click="ignoreIDs">Ignore IDs</button>
       <button @click="uploadToECUs">Upload IDs to ECUs</button> <br>
       <button @click="beginSimulation">{{ simulationStartTime ? 'Restart' : 'Start' }} Simulation</button>
@@ -75,10 +87,9 @@
       <div>
         <MessageStatus ref="messageStatus" :messages="port.messages" />
       </div>
-      <!-- Button to upload selected IDs to ECUs -->
-      <!-- <button @click="uploadToECU(index)">Upload to ECU</button> -->
       <button @click="sendData(port, index)">Send</button>
       <button @click="closePort(port)">Close Port</button>
+      <button @click="configureMask(port, index)">Configure Mask</button>
       <button @click="configureAttack(port)">Configure Attack</button>
     </div>
   </div>
@@ -90,6 +101,7 @@ import Multiselect from '@vueform/multiselect';
 import MessageStatus from '@/components/MessageStatus.vue';
 import Modal from '@/components/Modal.vue';
 import '@vueform/multiselect/themes/default.css';
+import axios from 'axios';
 
 export default {
   components: {
@@ -119,6 +131,11 @@ export default {
         startTime: 0,
       },
       simulationStartTime: null,
+      mask: {
+        value: '0x7FF',
+        port: null,
+        index: null,
+      }
     };
   },
   async mounted() {
@@ -165,6 +182,7 @@ export default {
           deviceName: null, // Initially, device name is unknown
           buffer: "",
           messages: [],
+          mask: '0x7FF',
         };
         this.serialPorts.push(serialPortData);
 
@@ -227,6 +245,24 @@ export default {
       }
     },
 
+    configureMask(port, index) {
+      this.modalType = 'maskConfig';
+      this.showModal = true;
+      this.mask.value = port.mask;
+      this.mask.port = port;
+      this.mask.index = index
+    },
+
+    saveMaskValue() {
+      this.serialPorts[this.mask.index].mask = this.mask.value;
+      this.showModal = false;
+      this.mask = {
+        value: '0x7FF',
+        port: null,
+        index: null,
+      };
+    },
+
     // Upload the selected CAN IDs to all connected ECU ports that have selected IDs
     async uploadToECUs() {
       this.serialPorts.forEach((portData, index) => {
@@ -239,18 +275,24 @@ export default {
     // Method to upload the selected IDs to the ECU
     async uploadToECU(index) {
       const selected = this.selectedIds[index];
-      // Filter the CAN messages based on the selected IDs, put into the format id#data
-      let ecuMessages = this.canMessages
-        .filter((message) => selected.includes(message.id))
-        .map((message) => ({ text: `${message.id}#${message.data}`, status: "unreceived", timestamp: null }));
-      this.serialPorts[index].messages = ecuMessages;
-      if (selected.length === 0) {
-        alert('No CAN IDs selected.');
+      const mask = parseInt(this.serialPorts[index].mask, 16);
+
+      // Use the findMatchingIDs function to get the matching IDs based on the mask
+      const matchingIDs = this.findMatchingIDs(selected, mask);
+      
+      if (matchingIDs.length === 0) {
+        alert('No matching CAN IDs found.');
         return;
       }
 
+      let ecuMessages = this.canMessages
+        .filter((message) => matchingIDs.includes(message.id.toString(16).toUpperCase())) // Compare as hex strings
+        .map((message) => ({ text: `${message.id}#${message.data}`, status: "unreceived", timestamp: null }));
+
+      this.serialPorts[index].messages = ecuMessages;
+
       // Format the message as required: "upload:["XXX","XXX","XXX"]:end"
-      const formattedMessage = `upload:[${selected.map(id => `"${id}"`).join(',')}]:end`;
+      const formattedMessage = `upload:{"ids":[${selected.map(id => `"${id}"`).join(',')}],"mask":${mask}}:end`;
 
       // Get the port for the corresponding index
       const portData = this.serialPorts[index];
@@ -301,17 +343,30 @@ export default {
     // Process the received message and update the status
     processReceivedMessage(portData, message) {
       console.log("Received message:", message);
-      const timestamp = Date.now() - this.simulationStartTime;
-      const messageContent = message.slice(5, message.length - 8); // Remove 'recv:' and ':endrecv'
+
+      // Remove 'recv:' and ':endrecv' from the message
+      const cleanMessage = message.replace(/^recv:/, '').replace(/:endrecv$/, '');
+
+      // Split the message into parts based on '#'
+      const messageParts = cleanMessage.split('#');
+
+      // Assuming the format is ID#data#timestamp, extract relevant data
+      const messageContent = `${messageParts[0]}#${messageParts[1]}`;
+      const timestamp = parseInt(messageParts[2], 10); // 'timestamp' part, convert to integer
+
+      // Find the message in the portData that matches the content and is unreceived
       const messageIndex = portData.messages.findIndex((m) => m.text === messageContent && m.status === "unreceived");
+
       if (messageIndex !== -1) {
+        // Update status and timestamp if message was found
         portData.messages[messageIndex].status = "received";
         portData.messages[messageIndex].timestamp = timestamp;
-      }
-      else {
+      } else {
+        // Add new message with 'unexpected' status if not found
         portData.messages.push({ text: messageContent, status: "unexpected", timestamp });
       }
     },
+
 
     saveSelectedIds() {
       localStorage.setItem('selectedIds', JSON.stringify(this.selectedIds));
@@ -319,6 +374,25 @@ export default {
     loadSelectedIds(length) {
       const savedIds = localStorage.getItem('selectedIds');
       return savedIds ? JSON.parse(savedIds) : Array(length).fill([]);
+    },
+
+    findMatchingIDs(filteredIDs, mask) {
+      filteredIDs = filteredIDs.map(id => parseInt(id, 16)); // Convert to decimal
+      console.log(filteredIDs);
+      const maxID = 0x7FF; // Maximum 11-bit CAN ID (2047 in decimal)
+      const matchingIDs = [];
+
+      for (let id = 0; id <= maxID; id++) {
+        for (const filteredID of filteredIDs) {
+          // Apply the mask to the current ID and the filtered ID
+          if ((id & mask) === (filteredID & mask)) {
+            matchingIDs.push(id.toString(16).toUpperCase()); // Convert to hexadecimal
+            break; // No need to check other filtered IDs for this ID
+          }
+        }
+      }
+
+      return matchingIDs;
     },
 
     ignoreIDs() {
@@ -412,6 +486,7 @@ export default {
     processFile(fileContent) {
       try {
         this.canData = this.parseCandumpFile(fileContent);
+        this.sendMessagesToBackend()
         this.uniqueIds = this.canData ? Object.keys(this.canData) : [];
         console.log("CAN Data:", this.canData);
         this.error = '';
@@ -459,6 +534,12 @@ export default {
       });
 
       return canData; // Return the transformed object with relative timestamps
+    },
+
+    async sendMessagesToBackend() {
+      const response = await axios.post('http://localhost:5000/load_can_messages', this.canMessages);
+      let status = response.data.message;
+      console.log('CAN messages loaded successfully:', response.data);
     },
 
     // Configure the attack
@@ -536,90 +617,22 @@ export default {
         });
       }
 
-      // Find the port named "Sender"
-      const senderPort = this.serialPorts.find((port) => port.deviceName === "Sender");
-
-      if (!senderPort) {
-        console.error('No port named "Sender" found.');
-        return;
-      }
-
-      const textEncoder = new TextEncoder();
-
-      let writer = null;
-
-      // Attempt to get a writer once and use it throughout
       try {
-        writer = senderPort.port.writable.getWriter();
+        const payload = {
+          interface: 'can0',      // Default CAN interface
+          bitrate: 500000         // Default bitrate
+        };
+
+        const response = await axios.post('http://localhost:5000/start_simulation', payload);
+        this.simulationStatus = response.data.message;
+        console.log('Simulation started successfully:', response.data);
       } catch (error) {
-        console.error('Error getting writer for Sender:', error);
-        return;
+        console.error('Error starting simulation:', error.response?.data || error.message);
+        this.simulationStatus = error.response?.data?.message || 'Failed to start simulation.';
       }
 
-      await writer.write(textEncoder.encode("start_simulation\n"));
       this.simulationStartTime = Date.now();
-      // // Process each CAN message and send it to the "Sender" port
-      // this.canMessages.forEach(async (message) => {
-      //   try {
-      //     // Send the message to the "Sender" port
-      //     await writer.write(textEncoder.encode(message + "\n"));
-      //     // console.log(`Sent message: ${message} to Sender`);
-      //   } catch (error) {
-      //     console.error('Error sending message to Sender:', error);
-      //   }
-      // });
-
-      // Ensure the writer is released after sending all messages
-      writer.releaseLock();
     },
-
-    // Parse the uploaded file content
-    //   parseCandumpFile(content) {
-    //     const lines = content.split('\n');
-    //     // Find the port named "Sender"
-    //     const senderPort = this.serialPorts.find((port) => port.deviceName === "Sender");
-
-    //     if (!senderPort) {
-    //       console.error('No port named "Sender" found.');
-    //       return;
-    //     }
-
-    //     // const textEncoder = new TextEncoder();
-
-    //     // let writer = null;
-
-    //     // // Attempt to get a writer once and use it throughout
-    //     // try {
-    //     //   writer = senderPort.port.writable.getWriter();
-    //     // } catch (error) {
-    //     //   console.error('Error getting writer for Sender:', error);
-    //     //   return;
-    //     // }
-
-    //     // Process each line in the CAN dump file
-    //     lines.forEach(async (line) => {
-    //       const parts = line.trim().split(/\s+/);
-
-    //       if (parts.length > 2) {
-    //         // Example line format: (1290000000.000000) can0 585#0040000000020018
-    //         const [canId, data] = parts[2].split('#'); // Split CAN ID and data
-
-    //         // Construct the message to send: `${canId}#${data}`
-    //         const message = `${canId}#${data}`;
-
-    //         // try {
-    //         //   // Send the message to the "Sender" port
-    //         //   await writer.write(textEncoder.encode(message + "\n"));
-    //         //   console.log(`Sent message: ${message} to Sender`);
-    //         // } catch (error) {
-    //         //   console.error('Error sending message to Sender:', error);
-    //         // }
-    //       }
-    //     });
-
-    //     // Ensure the writer is released after sending all messages
-    //     // writer.releaseLock();
-    //   },
   },
 };
 </script>
@@ -640,6 +653,14 @@ input {
 .attack-config {
   font-family: Arial, sans-serif;
   margin: 20px;
+}
+
+.scroll-container {
+  height: 300px; /* Adjust height as needed */
+  overflow-y: auto; /* Enable vertical scrolling */
+  border: 1px solid #ccc; /* Optional: Add a border for visibility */
+  padding: 10px; /* Optional: Add some padding */
+  background-color: #f9f9f9; /* Optional: Set a background color */
 }
 
 .select-container,
