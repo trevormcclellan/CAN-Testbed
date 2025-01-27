@@ -378,7 +378,6 @@ export default {
 
     findMatchingIDs(filteredIDs, mask) {
       filteredIDs = filteredIDs.map(id => parseInt(id, 16)); // Convert to decimal
-      console.log(filteredIDs);
       const maxID = 0x7FF; // Maximum 11-bit CAN ID (2047 in decimal)
       const matchingIDs = [];
 
