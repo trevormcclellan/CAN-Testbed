@@ -84,7 +84,8 @@
           :searchable=true :options="uniqueIds" placeholder="Select CAN IDs" label="ID" track-by="ID"
           :show-labels="false" :max="6" />
       </div>
-      <div>
+      <h3>Messages</h3>
+      <div class="scroll-container">
         <MessageStatus ref="messageStatus" :messages="port.messages" />
       </div>
       <button @click="sendData(port, index)">Send</button>
