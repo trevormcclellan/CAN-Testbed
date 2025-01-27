@@ -82,7 +82,7 @@ void handleUpload(String command)
   command.replace("upload:", "");
   command.replace(":end", "");
 
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, command);
 
   if (error)
@@ -255,7 +255,7 @@ void handleCommand(String command)
     command.replace("ignore:", "");
     command.replace(":end", "");
 
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, command);
 
     if (error)
