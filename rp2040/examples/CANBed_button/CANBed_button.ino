@@ -6,6 +6,7 @@
 #define SPI_CS_PIN 9
 MCP_CAN CAN(SPI_CS_PIN);
 
+int button = 21;
 int led = 18;
 String deviceName;
 const int MAX_HW_FILTERS = 6; // MCP2515 supports 6 filters
@@ -13,6 +14,11 @@ int selectedIds[20];          // Example size for selected IDs (can hold up to 2
 int numSelectedIds = 0;
 int ignoredIds[20];           // Example size for ignored IDs (can hold up to 20)
 int numIgnoredIds = 0;
+
+int buttonState = 0;
+int lastButtonState = 0;
+unsigned char hazardsOff[8] = {0x03, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x1C};
+unsigned char hazardsOn[8] = {0x03, 0x01, 0x08, 0x00, 0x02, 0x00, 0x00, 0x5C};
 
 // Replay configuration
 String replayId;
@@ -70,7 +76,7 @@ void handleUpload(String command)
   command.replace("upload:", "");
   command.replace(":end", "");
 
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, command);
 
   if (error)
@@ -80,24 +86,30 @@ void handleUpload(String command)
     return;
   }
 
-  JsonArray arr = doc.as<JsonArray>();
-  numSelectedIds = arr.size();
+  JsonObject obj = doc.as<JsonObject>();
+  JsonArray ids = obj["ids"];
+  int mask = obj["mask"]; // Expecting mask as an integer
+
+  numSelectedIds = ids.size();
 
   for (int i = 0; i < numSelectedIds; i++)
   {
     // Convert each hex string ID to an integer
-    const char *hexIdStr = arr[i].as<const char *>();
+    const char *hexIdStr = ids[i].as<const char *>();
     selectedIds[i] = strtol(hexIdStr, NULL, 16); // Convert hex string to integer
   }
-  Serial.println("Uploaded and set selected CAN IDs:");
+
+  Serial.println("Uploaded selected CAN IDs and mask:");
   for (int i = 0; i < numSelectedIds; i++)
   {
     Serial.println(selectedIds[i], HEX);
   }
+  Serial.print("Mask: 0x");
+  Serial.println(mask, HEX);
 
   if (numSelectedIds <= MAX_HW_FILTERS)
   {
-    setupHardwareFilters();
+    setupHardwareFilters(mask);
   }
   else
   {
@@ -170,11 +182,11 @@ void executeReplay()
 }
 
 // Function to set hardware filters
-void setupHardwareFilters()
+void setupHardwareFilters(unsigned long mask)
 {
   Serial.println("Setting up hardware filters:");
-  CAN.init_Mask(0, 0, 0x3ff);
-  CAN.init_Mask(1, 0, 0x3ff);
+  CAN.init_Mask(0, 0, mask); // Set both masks to the same value
+  CAN.init_Mask(1, 0, mask);
 
   for (int i = 0; i < 6; i++)
   {
@@ -237,7 +249,7 @@ void handleCommand(String command)
     command.replace("ignore:", "");
     command.replace(":end", "");
 
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, command);
 
     if (error)
@@ -281,6 +293,7 @@ void setup()
 {
   Serial.begin(115200);
   pinMode(led, OUTPUT);
+  pinMode(button, INPUT_PULLUP);
   EEPROM.begin(512);
   readDeviceName();
 
@@ -304,8 +317,33 @@ void setup()
   }
 }
 
+void flashHazards() {
+  unsigned long startTime = millis();
+  while (millis() - startTime < 5000) {  // Run for 5 seconds
+    // Send message 1 five times (every 40 ms)
+    for (int i = 0; i < 5; i++) {
+        CAN.sendMsgBuf(0x541, 0, 8, hazardsOff);
+        delay(60);
+    }
+
+    // Send message 2 six times (every 40 ms)
+    for (int i = 0; i < 6; i++) {
+        CAN.sendMsgBuf(0x541, 0, 8, hazardsOn);
+        delay(60);
+    }
+  }
+}
+
 void loop()
 {
+  buttonState = digitalRead(button);
+
+  if (buttonState == LOW && lastButtonState == HIGH) {
+    flashHazards();
+  }
+
+  lastButtonState = buttonState;
+
   if (Serial.available() > 0)
   {
     String command = Serial.readStringUntil('\n');
@@ -347,6 +385,8 @@ void loop()
         return; // Ignore if ID doesn't match any in the array
     }
 
+    unsigned long recvTime = millis();
+
     // If using hardware filters or ID matches, process the message
     Serial.print("recv:");
     Serial.print(canId, HEX);
@@ -357,6 +397,8 @@ void loop()
         Serial.print("0");                   // Zero-pad single-digit hex values
       Serial.print(transformedData[i], HEX); // Print the data in hexadecimal
     }
+    Serial.print("#");
+    Serial.print(recvTime);
     Serial.println(":endrecv");
 
     // Handle replay logic
