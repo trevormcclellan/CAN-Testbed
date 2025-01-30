@@ -39,11 +39,10 @@
         <div v-else-if="modalType == 'ignoreIds'">
           <h2>Ignore CAN IDs</h2>
           <p>Enter the CAN IDs you want to ignore (in hexadecimal format):</p>
-          <Multiselect v-model="ignoredIDs" mode="tags" :searchable="true" placeholder="Enter CAN IDs" label="ID" track-by="ID"
+          <Multiselect v-model="ignoredIDs" mode="tags" :searchable=true placeholder="Enter CAN IDs" label="ID" track-by="ID"
             :show-labels="false" :createTag="true" :addTagOn="['enter', 'space', 'tab', ';', ',']"
             :showOptions="false" />
-          <input v-model="arrayName" placeholder="Enter a name for this set of ID's" />
-          <button @click="saveIgnoredIDs">Save</button>
+          <button @click="uploadIgnoredIDs">Save</button>
         </div>
         <div v-else-if="modalType == 'maskConfig'">
           <h2>Configure Mask</h2>
@@ -122,7 +121,6 @@ export default {
       showModal: false,
       modalType: '',
       ignoredIDs: [],
-      arrayName: '',
       attack: {
         type: null,
         port: null,
@@ -167,35 +165,6 @@ export default {
         alert("Web Serial API is not supported in this browser.");
       }
     },
-
-
-
-//   methods: {
-//     saveIgnoredIDs() {
-//       if (this.arrayName.trim() === '') {
-//         alert('Please enter a name for the array.');
-//         return;
-//       }
-
-//       // Save the named array to local storage
-//       const savedArrays = JSON.parse(localStorage.getItem('savedArrays')) || {};
-//       savedArrays[this.arrayName] = this.ignoredIDs;
-//       localStorage.setItem('savedArrays', JSON.stringify(savedArrays));
-      
-//       // Call the method to upload IDs to the board
-//       this.uploadToBoard();
-//     },
-//     uploadToBoard() {
-//       // Logic to upload IDs to the board
-//       // This is a placeholder function, replace with actual upload logic
-//       console.log('Uploading to board:', this.ignoredIDs);
-//     }
-//   }
-// };
-
-
-
-
 
     // Connect to a specific port and retrieve its name
     async connectPort(port) {
@@ -253,24 +222,8 @@ export default {
       this.serialPorts.forEach((portData, index) => {
         this.uploadIgnoredIDsToECU(index);
       });
-      //send the ignored ID's to Local Storage
-      localStorage.setItem('ignoredIDs', JSON.stringify(this.ignoredIDs));
       this.showModal = false;
     },
-    saveIgnoredIDs() {
-       if (this.arrayName.trim() === '') {
-         alert('Please enter a name for the array.');
-         return;
-       }
-
-      // Save the named array to local storage
-       const savedArrays = JSON.parse(localStorage.getItem('savedArrays')) || {};
-       savedArrays[this.arrayName] = this.ignoredIDs;
-       localStorage.setItem('savedArrays', JSON.stringify(savedArrays));
-      
-       // Call the method to upload IDs to the board
-       this.uploadToBoard();
-     },
 
     // Upload the ignored IDs to the ECU
     async uploadIgnoredIDsToECU(index) {
