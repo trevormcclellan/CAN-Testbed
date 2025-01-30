@@ -12,7 +12,7 @@ LiquidCrystal lcd(10, 19, 21, 22, 23, 24);
 
 const unsigned long CAN_ID_SAS11 = 0x2B0;  // CAN ID for SAS11 (688 decimal)
 const float ANGLE_SCALE_FACTOR = 0.1;
-const int MAX_ANGLE = 45; // Max visualized steering angle
+const int MAX_ANGLE = 400; // Max visualized steering angle
 
 // Custom characters for the bar display
 byte borderMiddle[8] = {0b11111, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111};
@@ -406,24 +406,26 @@ void loop()
       int16_t rawAngle = ((int16_t)buf[1] << 8) | buf[0];  // Extract 16-bit signed steering angle
       float steeringAngle = rawAngle * ANGLE_SCALE_FACTOR;
 
-      // Display numeric angle value
-      lcd.setCursor(0, 0);
-      lcd.print(" Angle: ");
-      lcd.print(steeringAngle, 1);
-      lcd.print("   ");
+      if (steeringAngle <= MAX_ANGLE) {
+        // Display numeric angle value
+        lcd.setCursor(0, 0);
+        lcd.print(" Angle: ");
+        lcd.print(steeringAngle, 1);
+        lcd.print("   ");
 
-      // Clear bar and update visualization
-      int filledBlocks = map(abs(steeringAngle), 0, MAX_ANGLE, 0, 7);
+        // Clear bar and update visualization
+        int filledBlocks = map(abs(steeringAngle), 0, MAX_ANGLE, 0, 8);
 
-      if (steeringAngle > 0) {
-        for (int i = 8; i <= 15; i++) {
-          lcd.setCursor(i, 1);
-          lcd.write((i <= 7 + filledBlocks) ? byte(3) : ((i == 15) ? byte(1) : byte(2)));
-        }
-      } else if (steeringAngle < 0) {
-        for (int i = 7; i >= 0; i--) {
-          lcd.setCursor(i, 1);
-          lcd.write((i >= 8 - filledBlocks) ? byte(3) : ((i == 0) ? byte(0) : byte(2)));
+        if (steeringAngle > 0) {
+          for (int i = 8; i <= 15; i++) {
+            lcd.setCursor(i, 1);
+            lcd.write((i <= 7 + filledBlocks) ? byte(3) : ((i == 15) ? byte(1) : byte(2)));
+          }
+        } else if (steeringAngle < 0) {
+          for (int i = 7; i >= 0; i--) {
+            lcd.setCursor(i, 1);
+            lcd.write((i >= 8 - filledBlocks) ? byte(3) : ((i == 0) ? byte(0) : byte(2)));
+          }
         }
       }
     }
