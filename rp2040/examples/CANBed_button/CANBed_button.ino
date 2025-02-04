@@ -2,6 +2,7 @@
 #include <mcp_canbus.h>
 #include <EEPROM.h>
 #include <ArduinoJson.h>
+#include <ArduinoQueue.h>
 
 #define SPI_CS_PIN 9
 MCP_CAN CAN(SPI_CS_PIN);
@@ -12,7 +13,7 @@ String deviceName;
 const int MAX_HW_FILTERS = 6; // MCP2515 supports 6 filters
 int selectedIds[20];          // Example size for selected IDs (can hold up to 20)
 int numSelectedIds = 0;
-int ignoredIds[20];           // Example size for ignored IDs (can hold up to 20)
+int ignoredIds[20]; // Example size for ignored IDs (can hold up to 20)
 int numIgnoredIds = 0;
 
 int buttonState = 0;
@@ -29,6 +30,9 @@ int replayStartTime = 0;
 bool replayConfigured = false;
 bool replayTriggered = false;
 unsigned long firstCanMessageTime = 0;
+
+// Queue to hold serial messages
+ArduinoQueue<String> messageQueue(1000);
 
 // Function to read device name from EEPROM
 void readDeviceName()
@@ -289,6 +293,36 @@ void transformData(unsigned char *transformedData, unsigned char *data, int data
   }
 }
 
+void enqueueMessage(const String &message)
+{
+  if (!messageQueue.isFull())
+  {
+    messageQueue.enqueue(message);
+  }
+  else
+  {
+    digitalWrite(led, HIGH);
+  }
+}
+
+void processSerialQueue()
+{
+  // Non-blocking serial output
+  while (!messageQueue.isEmpty())
+  {
+    String message = messageQueue.getHead();
+    if (Serial.availableForWrite() >= message.length())
+    {
+      Serial.println(message);
+      messageQueue.dequeue();
+    }
+    else
+    {
+      break;
+    }
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -317,19 +351,23 @@ void setup()
   }
 }
 
-void flashHazards() {
+void flashHazards()
+{
   unsigned long startTime = millis();
-  while (millis() - startTime < 5000) {  // Run for 5 seconds
+  while (millis() - startTime < 5000)
+  { // Run for 5 seconds
     // Send message 1 five times (every 40 ms)
-    for (int i = 0; i < 5; i++) {
-        CAN.sendMsgBuf(0x541, 0, 8, hazardsOff);
-        delay(60);
+    for (int i = 0; i < 5; i++)
+    {
+      CAN.sendMsgBuf(0x541, 0, 8, hazardsOff);
+      delay(60);
     }
 
     // Send message 2 six times (every 40 ms)
-    for (int i = 0; i < 6; i++) {
-        CAN.sendMsgBuf(0x541, 0, 8, hazardsOn);
-        delay(60);
+    for (int i = 0; i < 6; i++)
+    {
+      CAN.sendMsgBuf(0x541, 0, 8, hazardsOn);
+      delay(60);
     }
   }
 }
@@ -338,7 +376,8 @@ void loop()
 {
   buttonState = digitalRead(button);
 
-  if (buttonState == LOW && lastButtonState == HIGH) {
+  if (buttonState == LOW && lastButtonState == HIGH)
+  {
     flashHazards();
   }
 
@@ -388,18 +427,23 @@ void loop()
     unsigned long recvTime = millis();
 
     // If using hardware filters or ID matches, process the message
-    Serial.print("recv:");
-    Serial.print(canId, HEX);
-    Serial.print("#"); // Add the '#' separator
+    String msg = String(canId, HEX);
+    while (msg.length() < 3)
+    {
+      msg = "0" + msg;
+    }
+    msg += "#";
+
     for (int i = 0; i < len; i++)
     {
       if (transformedData[i] < 0x10)
-        Serial.print("0");                   // Zero-pad single-digit hex values
-      Serial.print(transformedData[i], HEX); // Print the data in hexadecimal
+        msg += "0";
+      msg += String(transformedData[i], HEX);
     }
-    Serial.print("#");
-    Serial.print(recvTime);
-    Serial.println(":endrecv");
+    msg += "#" + String(recvTime);
+    msg.toUpperCase();
+    msg = "recv:" + msg + ":endrecv";
+    enqueueMessage(msg);
 
     // Handle replay logic
     if (replayConfigured && !replayTriggered)
@@ -415,4 +459,5 @@ void loop()
       executeReplay();
     }
   }
+  processSerialQueue();
 }

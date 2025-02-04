@@ -39,8 +39,8 @@
         <div v-else-if="modalType == 'ignoreIds'">
           <h2>Ignore CAN IDs</h2>
           <p>Enter the CAN IDs you want to ignore (in hexadecimal format):</p>
-          <Multiselect v-model="ignoredIDs" mode="tags" :searchable=true placeholder="Enter CAN IDs" label="ID" track-by="ID"
-            :show-labels="false" :createTag="true" :addTagOn="['enter', 'space', 'tab', ';', ',']"
+          <Multiselect v-model="ignoredIDs" mode="tags" :searchable=true placeholder="Enter CAN IDs" label="ID"
+            track-by="ID" :show-labels="false" :createTag="true" :addTagOn="['enter', 'space', 'tab', ';', ',']"
             :showOptions="false" />
           <button @click="uploadIgnoredIDs">Save</button>
         </div>
@@ -51,10 +51,11 @@
           <p>Matching IDs:</p>
           <div class="scroll-container">
             <ul>
-              <li v-for="id in findMatchingIDs(selectedIds[mask.index], parseInt(mask.value, 16))" :key="id">{{ id }}</li>
+              <li v-for="id in findMatchingIDs(selectedIds[mask.index], parseInt(mask.value, 16))" :key="id">{{ id }}
+              </li>
             </ul>
           </div>
-          
+
           <button @click="saveMaskValue">Save</button>
         </div>
       </Modal>
@@ -103,6 +104,7 @@ import MessageStatus from '@/components/MessageStatus.vue';
 import Modal from '@/components/Modal.vue';
 import '@vueform/multiselect/themes/default.css';
 import axios from 'axios';
+import io from 'socket.io-client';
 
 export default {
   components: {
@@ -132,6 +134,7 @@ export default {
         startTime: 0,
       },
       simulationStartTime: null,
+      simulationRunning: false,
       mask: {
         value: '0x7FF',
         port: null,
@@ -141,6 +144,14 @@ export default {
   },
   async mounted() {
     await this.loadPreviouslyConnectedPorts();
+  },
+  created() {
+    this.socket = io('http://localhost:5000');
+    this.socket.on('simulation_complete', () => {
+      console.log('Simulation complete.');
+      this.simulationRunning = false;
+      this.processReceivedMessages();
+    });
   },
   async beforeUnmount() {
     console.log("Closing all ports...");
@@ -183,6 +194,7 @@ export default {
           deviceName: null, // Initially, device name is unknown
           buffer: "",
           messages: [],
+          messageMap: null,
           mask: '0x7FF',
         };
         this.serialPorts.push(serialPortData);
@@ -280,17 +292,32 @@ export default {
 
       // Use the findMatchingIDs function to get the matching IDs based on the mask
       const matchingIDs = this.findMatchingIDs(selected, mask);
-      
+
       if (matchingIDs.length === 0) {
         alert('No matching CAN IDs found.');
         return;
       }
 
-      let ecuMessages = this.canMessages
+      let ecuMessages = [];
+      let messageMap = new Map();
+
+      this.canMessages
         .filter((message) => matchingIDs.includes(message.id.toString(16).toUpperCase())) // Compare as hex strings
-        .map((message) => ({ text: `${message.id}#${message.data}`, status: "unreceived", timestamp: null }));
+        .forEach((message, index) => {
+          const text = `${message.id}#${message.data}`;
+          const entry = { text, status: "unreceived", timestamp: null };
+
+          ecuMessages.push(entry);
+
+          // Maintain an ordered list of indices for each message content
+          if (!messageMap.has(text)) {
+            messageMap.set(text, []);
+          }
+          messageMap.get(text).push(index); // Store index to support duplicates
+        });
 
       this.serialPorts[index].messages = ecuMessages;
+      this.serialPorts[index].messageMap = messageMap;
 
       // Format the message as required: "upload:["XXX","XXX","XXX"]:end"
       const formattedMessage = `upload:{"ids":[${selected.map(id => `"${id}"`).join(',')}],"mask":${mask}}:end`;
@@ -318,53 +345,79 @@ export default {
         portData.deviceName = deviceName;
         return;
       }
-      portData.consoleOutput += value;
-      portData.buffer += value;
 
-      // Check for and process complete messages
-      let startIndex = portData.buffer.indexOf("recv:");
-      let endIndex = portData.buffer.indexOf(":endrecv", startIndex);
-
-      while (startIndex !== -1 && endIndex !== -1) {
-        // Extract the complete message
-        const completeMessage = portData.buffer.slice(startIndex, endIndex + 8); // Include ':endrecv'
-
-        // Process the message
-        this.processReceivedMessage(portData, completeMessage);
-
-        // Remove the processed message from the buffer
-        portData.buffer = portData.buffer.slice(endIndex + 8);
-
-        // Look for the next complete message
-        startIndex = portData.buffer.indexOf("recv:");
-        endIndex = portData.buffer.indexOf(":endrecv", startIndex);
+      if (this.simulationRunning) {
+        portData.buffer += value;
       }
+      else {
+        portData.consoleOutput += value;
+      }
+    },
+
+    async processReceivedMessages() {
+      await Promise.all(
+        this.serialPorts.map(async (portData) => {
+          const lines = portData.buffer.split('\n');
+
+          // Process each line sequentially to maintain the order within the serial port
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+
+            // Check if the line starts with 'recv:' and ends with ':endrecv'
+            if (trimmedLine.startsWith('recv:') && trimmedLine.endsWith(':endrecv')) {
+              this.processReceivedMessage(portData, trimmedLine);
+            } else {
+              portData.consoleOutput += `${trimmedLine}\n`;
+            }
+          }
+
+          // Clear the buffer when all processing is complete
+          portData.buffer = '';
+        })
+      );
+      console.log('Received messages processed.');
     },
 
     // Process the received message and update the status
     processReceivedMessage(portData, message) {
-      console.log("Received message:", message);
+      if (!message.includes('#')) {
+        portData.consoleOutput += `Malformed message: ${message}\n`;
+        return;
+      }
 
       // Remove 'recv:' and ':endrecv' from the message
       const cleanMessage = message.replace(/^recv:/, '').replace(/:endrecv$/, '');
+      const [id, data, timestampStr] = cleanMessage.split('#');
+      if (!id || !data || isNaN(timestampStr)) {
+        portData.consoleOutput += `Invalid message format: ${message}\n`;
+        return;
+      }
 
-      // Split the message into parts based on '#'
-      const messageParts = cleanMessage.split('#');
+      const messageContent = `${id}#${data}`;
+      const timestamp = parseInt(timestampStr, 10);
 
-      // Assuming the format is ID#data#timestamp, extract relevant data
-      const messageContent = `${messageParts[0]}#${messageParts[1]}`;
-      const timestamp = parseInt(messageParts[2], 10); // 'timestamp' part, convert to integer
+      // Get the indices of the message content in the message map (for faster lookup)
+      let messageIndices = portData.messageMap.get(messageContent) || [];
+      let nextMessageIndex = messageIndices.shift();
 
-      // Find the message in the portData that matches the content and is unreceived
-      const messageIndex = portData.messages.findIndex((m) => m.text === messageContent && m.status === "unreceived");
-
-      if (messageIndex !== -1) {
-        // Update status and timestamp if message was found
-        portData.messages[messageIndex].status = "received";
-        portData.messages[messageIndex].timestamp = timestamp;
-      } else {
-        // Add new message with 'unexpected' status if not found
+      // If the message content is not found, add it as an unexpected message
+      if (nextMessageIndex === undefined) {
         portData.messages.push({ text: messageContent, status: "unexpected", timestamp });
+        return;
+      }
+      // If the message content is found, update the status and timestamp
+      else {
+        portData.messages[nextMessageIndex].status = "received";
+        portData.messages[nextMessageIndex].timestamp = timestamp;
+
+        // Update the message map with the remaining indices
+        if (messageIndices.length > 0) {
+          portData.messageMap.set(messageContent, messageIndices);
+        }
+        // If there are no more indices, delete the message content from the map
+        else {
+          portData.messageMap.delete(messageContent);
+        }
       }
     },
 
@@ -623,12 +676,14 @@ export default {
           bitrate: 500000         // Default bitrate
         };
 
+        this.simulationRunning = true;
         const response = await axios.post('http://localhost:5000/start_simulation', payload);
         this.simulationStatus = response.data.message;
         console.log('Simulation started successfully:', response.data);
       } catch (error) {
         console.error('Error starting simulation:', error.response?.data || error.message);
         this.simulationStatus = error.response?.data?.message || 'Failed to start simulation.';
+        this.simulationRunning = false;
       }
 
       this.simulationStartTime = Date.now();
@@ -656,11 +711,16 @@ input {
 }
 
 .scroll-container {
-  height: 300px; /* Adjust height as needed */
-  overflow-y: auto; /* Enable vertical scrolling */
-  border: 1px solid #ccc; /* Optional: Add a border for visibility */
-  padding: 10px; /* Optional: Add some padding */
-  background-color: #f9f9f9; /* Optional: Set a background color */
+  height: 300px;
+  /* Adjust height as needed */
+  overflow-y: auto;
+  /* Enable vertical scrolling */
+  border: 1px solid #ccc;
+  /* Optional: Add a border for visibility */
+  padding: 10px;
+  /* Optional: Add some padding */
+  background-color: #f9f9f9;
+  /* Optional: Set a background color */
 }
 
 .select-container,

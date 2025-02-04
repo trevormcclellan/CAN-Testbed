@@ -2,6 +2,7 @@
 #include <mcp_canbus.h>
 #include <EEPROM.h>
 #include <ArduinoJson.h>
+#include <ArduinoQueue.h>
 #include <LiquidCrystal.h>
 
 #define SPI_CS_PIN 9
@@ -10,22 +11,22 @@ MCP_CAN CAN(SPI_CS_PIN);
 // LCD pin connections: RS, E, D4, D5, D6, D7
 LiquidCrystal lcd(10, 19, 21, 22, 23, 24);
 
-const unsigned long CAN_ID_SAS11 = 0x2B0;  // CAN ID for SAS11 (688 decimal)
+const unsigned long CAN_ID_SAS11 = 0x2B0; // CAN ID for SAS11 (688 decimal)
 const float ANGLE_SCALE_FACTOR = 0.1;
 const int MAX_ANGLE = 400; // Max visualized steering angle
 
 // Custom characters for the bar display
 byte borderMiddle[8] = {0b11111, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111};
-byte borderLeft[8]   = {0b11111, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111};
-byte borderRight[8]  = {0b11111, 0b00001, 0b00001, 0b00001, 0b00001, 0b00001, 0b00001, 0b11111};
-byte barFill[8]      = {0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111};
+byte borderLeft[8] = {0b11111, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111};
+byte borderRight[8] = {0b11111, 0b00001, 0b00001, 0b00001, 0b00001, 0b00001, 0b00001, 0b11111};
+byte barFill[8] = {0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111};
 
 int led = 18;
 String deviceName;
 const int MAX_HW_FILTERS = 6; // MCP2515 supports 6 filters
 int selectedIds[20];          // Example size for selected IDs (can hold up to 20)
 int numSelectedIds = 0;
-int ignoredIds[20];           // Example size for ignored IDs (can hold up to 20)
+int ignoredIds[20]; // Example size for ignored IDs (can hold up to 20)
 int numIgnoredIds = 0;
 
 // Replay configuration
@@ -37,6 +38,9 @@ int replayStartTime = 0;
 bool replayConfigured = false;
 bool replayTriggered = false;
 unsigned long firstCanMessageTime = 0;
+
+// Queue to hold serial messages
+ArduinoQueue<String> messageQueue(1000);
 
 // Function to read device name from EEPROM
 void readDeviceName()
@@ -297,6 +301,36 @@ void transformData(unsigned char *transformedData, unsigned char *data, int data
   }
 }
 
+void enqueueMessage(const String &message)
+{
+  if (!messageQueue.isFull())
+  {
+    messageQueue.enqueue(message);
+  }
+  else
+  {
+    digitalWrite(led, HIGH);
+  }
+}
+
+void processSerialQueue()
+{
+  // Non-blocking serial output
+  while (!messageQueue.isEmpty())
+  {
+    String message = messageQueue.getHead();
+    if (Serial.availableForWrite() >= message.length())
+    {
+      Serial.println(message);
+      messageQueue.dequeue();
+    }
+    else
+    {
+      break;
+    }
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -316,7 +350,8 @@ void setup()
   lcd.setCursor(0, 1);
   lcd.write(byte(0));
 
-  for (uint8_t i = 1; i < 15; i++) {
+  for (uint8_t i = 1; i < 15; i++)
+  {
     lcd.setCursor(i, 1);
     lcd.write(byte(2));
   }
@@ -389,24 +424,31 @@ void loop()
     unsigned long recvTime = millis();
 
     // If using hardware filters or ID matches, process the message
-    Serial.print("recv:");
-    Serial.print(canId, HEX);
-    Serial.print("#"); // Add the '#' separator
+    String msg = String(canId, HEX);
+    while (msg.length() < 3)
+    {
+      msg = "0" + msg;
+    }
+    msg += "#";
+
     for (int i = 0; i < len; i++)
     {
       if (transformedData[i] < 0x10)
-        Serial.print("0");                   // Zero-pad single-digit hex values
-      Serial.print(transformedData[i], HEX); // Print the data in hexadecimal
+        msg += "0";
+      msg += String(transformedData[i], HEX);
     }
-    Serial.print("#");
-    Serial.print(recvTime);
-    Serial.println(":endrecv");
+    msg += "#" + String(recvTime);
+    msg.toUpperCase();
+    msg = "recv:" + msg + ":endrecv";
+    enqueueMessage(msg);
 
-    if (canId == CAN_ID_SAS11) {
-      int16_t rawAngle = ((int16_t)buf[1] << 8) | buf[0];  // Extract 16-bit signed steering angle
+    if (canId == CAN_ID_SAS11)
+    {
+      int16_t rawAngle = ((int16_t)buf[1] << 8) | buf[0]; // Extract 16-bit signed steering angle
       float steeringAngle = rawAngle * ANGLE_SCALE_FACTOR;
 
-      if (steeringAngle <= MAX_ANGLE) {
+      if (steeringAngle <= MAX_ANGLE)
+      {
         // Display numeric angle value
         lcd.setCursor(0, 0);
         lcd.print(" Angle: ");
@@ -416,13 +458,18 @@ void loop()
         // Clear bar and update visualization
         int filledBlocks = map(abs(steeringAngle), 0, MAX_ANGLE, 0, 8);
 
-        if (steeringAngle > 0) {
-          for (int i = 8; i <= 15; i++) {
+        if (steeringAngle > 0)
+        {
+          for (int i = 8; i <= 15; i++)
+          {
             lcd.setCursor(i, 1);
             lcd.write((i <= 7 + filledBlocks) ? byte(3) : ((i == 15) ? byte(1) : byte(2)));
           }
-        } else if (steeringAngle < 0) {
-          for (int i = 7; i >= 0; i--) {
+        }
+        else if (steeringAngle < 0)
+        {
+          for (int i = 7; i >= 0; i--)
+          {
             lcd.setCursor(i, 1);
             lcd.write((i >= 8 - filledBlocks) ? byte(3) : ((i == 0) ? byte(0) : byte(2)));
           }
@@ -443,4 +490,5 @@ void loop()
       executeReplay();
     }
   }
+  processSerialQueue();
 }
