@@ -39,12 +39,36 @@
         <div v-else-if="modalType == 'ignoreIds'">
           <h2>Ignore CAN IDs</h2>
           <p>Enter the CAN IDs you want to ignore (in hexadecimal format):</p>
-          <Multiselect v-model="ignoredIDs" mode="tags" :searchable="true" placeholder="Enter CAN IDs" label="ID" track-by="ID"
-            :show-labels="false" :createTag="true" :addTagOn="['enter', 'space', 'tab', ';', ',']"
-            :showOptions="false" />
+          <Multiselect 
+          ref="ignoredIDsMultiselect"
+          v-model="ignoredIDs" 
+          mode="tags" 
+          :searchable="true" 
+          placeholder="Enter CAN IDs" 
+          :show-labels="false" 
+          :taggable="true"
+          :addTagOn="['enter', 'space', ';', ',']"
+          :showOptions="false"
+          :createTag="true"
+          @blur="handleBlur"
+          />
+
+            <!-- space for user to add name of CAN ID set--> 
           <input v-model="arrayName" placeholder="Enter a name for this set of ID's" />
           <button @click="saveIgnoredIDs">Save</button>
+          <!-- buttons to reapply saved sets-->
+          <div id="saved-sets">
+            <h3>Saved CAN ID Sets</h3>
+              <button
+                v-for="(set, index) in savedIgnoredIDs"
+                key="index" 
+                type="button" 
+                @click="selectIgnoredId(set)">
+                {{ set.name }}
+              </button>
+          </div>
         </div>
+
         <div v-else-if="modalType == 'maskConfig'">
           <h2>Configure Mask</h2>
           <p>Enter the mask value (in hexadecimal format):</p>
@@ -82,7 +106,7 @@
       <div>
         <label for="selectIds">Select up to 6 IDs:</label>
         <Multiselect @select="handleSelect" @deselect="handleDeselect" v-model="selectedIds[index]" mode="tags"
-          :searchable=true :options="uniqueIds" placeholder="Select CAN IDs" label="ID" track-by="ID"
+          :searchable="true" :options="uniqueIds" placeholder="Select CAN IDs" label="ID" track-by="ID"
           :show-labels="false" :max="6" />
       </div>
       <h3>Messages</h3>
@@ -96,6 +120,9 @@
     </div>
   </div>
 </template>
+
+
+
 
 
 <script>
@@ -123,6 +150,7 @@ export default {
       modalType: '',
       ignoredIDs: [],
       arrayName: '',
+      savedIgnoredIDs: [],
       attack: {
         type: null,
         port: null,
@@ -138,11 +166,14 @@ export default {
         value: '0x7FF',
         port: null,
         index: null,
-      }
+      },
+      // property to hold saved ignored sets
     };
   },
   async mounted() {
     await this.loadPreviouslyConnectedPorts();
+    // Load any previously saved ignored ID sets from local storage
+    this.loadSavedIgnoredIDs();
   },
   async beforeUnmount() {
     console.log("Closing all ports...");
@@ -168,32 +199,29 @@ export default {
       }
     },
 
+    onTag(newTag) {
+      return {ID: newTag };
+    },
+    handleBlur() {
+      const multiselect = this.$refs.ignoredIDsMultiselect;
+      if (multiselect) {
+        const inputEl = multiselect.$el.querySelector('input');
+        if (inputEl && inputEl.value.trim() !== '') {
+          const newTag = inputEl.value.trim();
+          // Push an object with property 'ID'
+          this.ignoredIDs.push({ ID: newTag });
+          inputEl.value = '';
+        }
+      }
+    },
 
-
-//   methods: {
-//     saveIgnoredIDs() {
-//       if (this.arrayName.trim() === '') {
-//         alert('Please enter a name for the array.');
-//         return;
-//       }
-
-//       // Save the named array to local storage
-//       const savedArrays = JSON.parse(localStorage.getItem('savedArrays')) || {};
-//       savedArrays[this.arrayName] = this.ignoredIDs;
-//       localStorage.setItem('savedArrays', JSON.stringify(savedArrays));
-      
-//       // Call the method to upload IDs to the board
-//       this.uploadToBoard();
-//     },
-//     uploadToBoard() {
-//       // Logic to upload IDs to the board
-//       // This is a placeholder function, replace with actual upload logic
-//       console.log('Uploading to board:', this.ignoredIDs);
-//     }
-//   }
-// };
-
-
+    watch: {
+      ignoredIDs(newVal) {
+        this.ignoredIDs = newVal.map(item =>
+          typeof item === 'string' ? { ID: item } : item
+        );
+      }
+    },
 
 
 
@@ -258,19 +286,30 @@ export default {
       this.showModal = false;
     },
     saveIgnoredIDs() {
-       if (this.arrayName.trim() === '') {
-         alert('Please enter a name for the array.');
-         return;
-       }
+      if (this.arrayName.trim() === '') {
+        alert('Please enter a name for the array.');
+        return;
+      }
+      if (this.ignoredIDs.length === 0) {
+        alert('Please add at least one CAN ID');
+        return;
+      }
+      // Here, ignoredIDs is an array of objects (each like { ID: "ABC123" })
+      const newSet = {
+        name: this.arrayName.trim(),
+        ids: this.ignoredIDs.slice()  // clone the array
+      };
+      let savedArrays = JSON.parse(localStorage.getItem('savedArrays') || '[]');
+      savedArrays.push(newSet);
+      localStorage.setItem('savedArrays', JSON.stringify(savedArrays));
+      this.savedIgnoredIDs = savedArrays;
+      console.log("Saved new set. Current savedIgnoredIDs:", this.savedIgnoredIDs);
+      // Clear inputs
+      this.arrayName = '';
+      this.ignoredIDs = [];
+    },
 
-      // Save the named array to local storage
-       const savedArrays = JSON.parse(localStorage.getItem('savedArrays')) || {};
-       savedArrays[this.arrayName] = this.ignoredIDs;
-       localStorage.setItem('savedArrays', JSON.stringify(savedArrays));
-      
-       // Call the method to upload IDs to the board
-       this.uploadToBoard();
-     },
+
 
     // Upload the ignored IDs to the ECU
     async uploadIgnoredIDsToECU(index) {
@@ -292,6 +331,22 @@ export default {
         console.error("Error uploading ignored IDs to ECU:", error);
       }
     },
+
+    loadSavedIgnoredIDs() {
+      let savedArrays = JSON.parse(localStorage.getItem('savedArrays') || '[]');
+      if (!Array.isArray(savedArrays)) {
+        savedArrays = [];
+      }
+      this.savedIgnoredIDs = savedArrays;
+      console.log("Loaded savedIgnoredIDs:", this.savedIgnoredIDs);
+      },
+
+    selectIgnoredId(savedSet) {
+      // Set ignoredIDs to the saved array of strings.
+      this.ignoredIDs = savedSet.ids.slice();
+      this.arrayName = savedSet.name;
+    },
+
 
     configureMask(port, index) {
       this.modalType = 'maskConfig';
