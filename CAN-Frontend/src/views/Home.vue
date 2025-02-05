@@ -450,7 +450,7 @@ export default {
         for (const filteredID of filteredIDs) {
           // Apply the mask to the current ID and the filtered ID
           if ((id & mask) === (filteredID & mask)) {
-            matchingIDs.push(id.toString(16).toUpperCase()); // Convert to hexadecimal
+            matchingIDs.push(id.toString(16).toUpperCase().padStart(3, '0')); 
             break; // No need to check other filtered IDs for this ID
           }
         }
