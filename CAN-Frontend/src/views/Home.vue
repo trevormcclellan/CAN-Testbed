@@ -105,6 +105,7 @@ import Modal from '@/components/Modal.vue';
 import '@vueform/multiselect/themes/default.css';
 import axios from 'axios';
 import io from 'socket.io-client';
+import { useWebWorkerFn } from '@vueuse/core'
 
 export default {
   components: {
@@ -195,6 +196,7 @@ export default {
           buffer: "",
           messages: [],
           messageMap: null,
+          worker: null,
           mask: '0x7FF',
         };
         this.serialPorts.push(serialPortData);
@@ -355,72 +357,81 @@ export default {
     },
 
     async processReceivedMessages() {
-      await Promise.all(
+      const results = await Promise.all(
         this.serialPorts.map(async (portData) => {
-          const lines = portData.buffer.split('\n');
+          const { workerFn, terminate } = useWebWorkerFn((portData) => {
+            const messages = JSON.parse(portData.messages);
+            const messageMap = portData.messageMap ? new Map(JSON.parse(portData.messageMap)) : new Map();
+            let consoleOutput = "";
 
-          // Process each line sequentially to maintain the order within the serial port
-          for (const line of lines) {
-            const trimmedLine = line.trim();
+            const lines = portData.buffer.split('\n');
 
-            // Check if the line starts with 'recv:' and ends with ':endrecv'
-            if (trimmedLine.startsWith('recv:') && trimmedLine.endsWith(':endrecv')) {
-              this.processReceivedMessage(portData, trimmedLine);
-            } else {
-              portData.consoleOutput += `${trimmedLine}\n`;
+            // Process each line sequentially to maintain the order within the serial port
+            for (const line of lines) {
+              const message = line.trim();
+
+              // Check if the line starts with 'recv:' and ends with ':endrecv'
+              if (message.startsWith('recv:') && message.endsWith(':endrecv')) {
+                if (!message.includes('#')) {
+                  consoleOutput += `Malformed message: ${message}\n`;
+                  continue;
+                }
+
+                // Remove 'recv:' and ':endrecv' from the message
+                const cleanMessage = message.replace(/^recv:/, '').replace(/:endrecv$/, '');
+                const [id, data, timestampStr] = cleanMessage.split('#');
+                if (!id || !data || isNaN(timestampStr)) {
+                  consoleOutput += `Invalid message format: ${message}\n`;
+                  continue;
+                }
+
+                const messageContent = `${id}#${data}`;
+                const timestamp = parseInt(timestampStr, 10);
+
+                // Get the indices of the message content in the message map (for faster lookup)
+                let messageIndices = messageMap.get(messageContent) || [];
+                let nextMessageIndex = messageIndices.shift();
+
+                // If the message content is not found, add it as an unexpected message
+                if (nextMessageIndex === undefined) {
+                  messages.push({ text: messageContent, status: "unexpected", timestamp });
+                }
+                // If the message content is found, update the status and timestamp
+                else {
+                  messages[nextMessageIndex].status = "received";
+                  messages[nextMessageIndex].timestamp = timestamp;
+
+                  // Update the message map with the remaining indices
+                  if (messageIndices.length > 0) {
+                    messageMap.set(messageContent, messageIndices);
+                  }
+                  // If there are no more indices, delete the message content from the map
+                  else {
+                    messageMap.delete(messageContent);
+                  }
+                }
+
+              } else {
+                consoleOutput += `${message}\n`;
+              }
             }
-          }
-
-          // Clear the buffer when all processing is complete
-          portData.buffer = '';
+            portData.buffer = '';
+            return { messages: messages, consoleOutput: consoleOutput };
+          });
+          portData.worker = workerFn;
+          portData.terminate = terminate;
+          const messgaesJson = JSON.stringify(portData.messages);
+          const messageMapJson = JSON.stringify(portData.messageMap ? Array.from(portData.messageMap) : null);
+          const result = await portData.worker({ buffer: portData.buffer, messages: messgaesJson, messageMap: messageMapJson });
+          return result;
         })
       );
+      this.serialPorts.forEach((portData, index) => {
+        portData.messages = results[index].messages;
+        portData.consoleOutput += results[index].consoleOutput;
+      });
       console.log('Received messages processed.');
     },
-
-    // Process the received message and update the status
-    processReceivedMessage(portData, message) {
-      if (!message.includes('#')) {
-        portData.consoleOutput += `Malformed message: ${message}\n`;
-        return;
-      }
-
-      // Remove 'recv:' and ':endrecv' from the message
-      const cleanMessage = message.replace(/^recv:/, '').replace(/:endrecv$/, '');
-      const [id, data, timestampStr] = cleanMessage.split('#');
-      if (!id || !data || isNaN(timestampStr)) {
-        portData.consoleOutput += `Invalid message format: ${message}\n`;
-        return;
-      }
-
-      const messageContent = `${id}#${data}`;
-      const timestamp = parseInt(timestampStr, 10);
-
-      // Get the indices of the message content in the message map (for faster lookup)
-      let messageIndices = portData.messageMap.get(messageContent) || [];
-      let nextMessageIndex = messageIndices.shift();
-
-      // If the message content is not found, add it as an unexpected message
-      if (nextMessageIndex === undefined) {
-        portData.messages.push({ text: messageContent, status: "unexpected", timestamp });
-        return;
-      }
-      // If the message content is found, update the status and timestamp
-      else {
-        portData.messages[nextMessageIndex].status = "received";
-        portData.messages[nextMessageIndex].timestamp = timestamp;
-
-        // Update the message map with the remaining indices
-        if (messageIndices.length > 0) {
-          portData.messageMap.set(messageContent, messageIndices);
-        }
-        // If there are no more indices, delete the message content from the map
-        else {
-          portData.messageMap.delete(messageContent);
-        }
-      }
-    },
-
 
     saveSelectedIds() {
       localStorage.setItem('selectedIds', JSON.stringify(this.selectedIds));

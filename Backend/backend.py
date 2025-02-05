@@ -89,13 +89,7 @@ def start_simulation():
             for message in sorted(can_messages, key=lambda x: x['timestamp']):
                 elapsed_time = time.time() - start_time
                 time_to_wait = message['timestamp'] - elapsed_time
-                
-                # time_to_wait = start_time + message['timestamp'] - time.time()
-                # time_to_wait = 0.01
-                # print(message['timestamp'])
-                # if time_to_wait <= 0:
-                #     if prev_time_to_wait is not None and prev_time_to_wait <= 0:
-                #         time_to_wait = 0.01
+
                 if time_to_wait > 0:
                     time.sleep(time_to_wait)
 
@@ -112,6 +106,7 @@ def start_simulation():
                 except can.CanError as e:
                     print(f"Failed to send message: {e}")
 
+            print("Simulation completed successfully")
             socketio.emit('simulation_complete', {'status': 'Simulation completed successfully'})
 
         except Exception as e:
