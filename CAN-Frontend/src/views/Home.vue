@@ -121,6 +121,7 @@ export default {
       canMessages: [], // Array to store the CAN messages
       uniqueIds: [], // Unique CAN IDs from the uploaded file
       error: "", // Error message for file processing
+      selectedIds: [], // Selected CAN IDs for each serial port
       showModal: false,
       modalType: '',
       ignoredIDs: [],
@@ -166,7 +167,6 @@ export default {
       if ("serial" in navigator) {
         try {
           const ports = await navigator.serial.getPorts();
-          this.selectedIds = this.loadSelectedIds(ports.length);
           for (const port of ports) {
             this.connectPort(port);
           }
@@ -434,11 +434,17 @@ export default {
     },
 
     saveSelectedIds() {
-      localStorage.setItem('selectedIds', JSON.stringify(this.selectedIds));
+      this.serialPorts.forEach((portData, index) => {
+        localStorage.setItem(`selectedIds-${portData.deviceName}`, JSON.stringify(this.selectedIds[index]));
+      });
     },
     loadSelectedIds(length) {
-      const savedIds = localStorage.getItem('selectedIds');
-      return savedIds ? JSON.parse(savedIds) : Array(length).fill([]);
+      // Load selected IDs from local storage based on the device name
+      return Array.from({ length }, (_, index) => {
+        const deviceName = this.serialPorts[index].deviceName;
+        const savedIds = localStorage.getItem(`selectedIds-${deviceName}`);
+        return savedIds ? JSON.parse(savedIds) : [];
+      });
     },
 
     findMatchingIDs(filteredIDs, mask) {
@@ -537,6 +543,8 @@ export default {
         this.error = 'No file selected';
         return;
       }
+
+      this.selectedIds = this.loadSelectedIds(this.serialPorts.length);
 
       const reader = new FileReader();
       reader.onload = (e) => {
