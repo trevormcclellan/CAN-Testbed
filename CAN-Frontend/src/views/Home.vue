@@ -43,14 +43,6 @@
         </div>
         <div v-else-if="modalType == 'ignoreIds'">
           <h2>Ignore CAN IDs</h2>
-          <p>Enter the CAN IDs you want to ignore (in hexadecimal format):</p>
-          <Multiselect ref="ignoredIDsMultiselect" v-model="ignoredIDs" mode="tags" :searchable="true"
-            placeholder="Enter CAN IDs" :show-labels="false" :taggable="true" :addTagOn="['enter', 'space', ';', ',']"
-            :showOptions="false" :createTag="true" @blur="handleBlur" />
-
-          <!-- space for user to add name of CAN ID set-->
-          <input v-model="arrayName" placeholder="Enter a name for this set of ID's" />
-          <button @click="saveIgnoredIDs">Save</button>
           <!-- buttons to reapply saved sets-->
           <div id="saved-sets">
             <h3>Saved CAN ID Sets</h3>
@@ -58,6 +50,15 @@
               {{ set.name }}
             </button>
           </div>
+          <p>Enter the CAN IDs you want to ignore (in hexadecimal format):</p>
+          <Multiselect ref="ignoredIDsMultiselect" v-model="ignoredIDs" :allowAbsent="true" mode="tags"
+            :searchable="true" placeholder="Enter CAN IDs" :show-labels="false" :taggable="true"
+            :addTagOn="['enter', 'space', ';', ',']" :showOptions="false" :createTag="true" @focusout="handleBlur" />
+
+          <!-- space for user to add name of CAN ID set-->
+          <input v-model="arrayName" placeholder="Enter a name for this set of ID's" />
+          <button @click="saveIgnoredIDs">Save Set</button>
+          <button @click="uploadIgnoredIDs">Upload</button>
         </div>
 
         <div v-else-if="modalType == 'maskConfig'">
@@ -113,10 +114,6 @@
   </div>
 </template>
 
-
-
-
-
 <script>
 import Multiselect from '@vueform/multiselect';
 import MessageStatus from '@/components/MessageStatus.vue';
@@ -164,7 +161,6 @@ export default {
         port: null,
         index: null,
       },
-      // property to hold saved ignored sets
     };
   },
   async mounted() {
@@ -205,31 +201,17 @@ export default {
       }
     },
 
-    onTag(newTag) {
-      return { ID: newTag };
-    },
     handleBlur() {
       const multiselect = this.$refs.ignoredIDsMultiselect;
       if (multiselect) {
         const inputEl = multiselect.$el.querySelector('input');
         if (inputEl && inputEl.value.trim() !== '') {
           const newTag = inputEl.value.trim();
-          // Push an object with property 'ID'
-          this.ignoredIDs.push({ ID: newTag });
+          this.ignoredIDs.push(newTag);
           inputEl.value = '';
         }
       }
     },
-
-    watch: {
-      ignoredIDs(newVal) {
-        this.ignoredIDs = newVal.map(item =>
-          typeof item === 'string' ? { ID: item } : item
-        );
-      }
-    },
-
-
 
     // Connect to a specific port and retrieve its name
     async connectPort(port) {
@@ -291,6 +273,7 @@ export default {
       });
       this.showModal = false;
     },
+
     saveIgnoredIDs() {
       if (this.arrayName.trim() === '') {
         alert('Please enter a name for the array.');
@@ -314,8 +297,6 @@ export default {
       this.arrayName = '';
       this.ignoredIDs = [];
     },
-
-
 
     // Upload the ignored IDs to the ECU
     async uploadIgnoredIDsToECU(index) {
@@ -344,12 +325,11 @@ export default {
         savedArrays = [];
       }
       this.savedIgnoredIDs = savedArrays;
-      console.log("Loaded savedIgnoredIDs:", this.savedIgnoredIDs);
     },
 
     selectIgnoredId(savedSet) {
       // Set ignoredIDs to the saved array of strings.
-      this.ignoredIDs = savedSet.ids.slice();
+      this.ignoredIDs = savedSet.ids;
       this.arrayName = savedSet.name;
     },
 
