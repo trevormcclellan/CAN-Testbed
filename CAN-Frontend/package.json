@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@vueform/multiselect": "^2.6.8",
+    "@vueuse/core": "^12.5.0",
     "axios": "^1.7.9",
+    "socket.io-client": "^4.8.1",
     "vue": "^3.4.29",
     "vue-router": "^4.0.13"
   },

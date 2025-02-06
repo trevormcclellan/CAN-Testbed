@@ -1,5 +1,10 @@
 <template>
   <div>
+    <!-- Loading Overlay -->
+    <div v-if="loading" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <p>Loading...</p>
+    </div>
     <div>
       <Modal v-model:visible="showModal">
         <div v-if="modalType == 'attackConfig'" class="attack-config">
@@ -38,35 +43,22 @@
         </div>
         <div v-else-if="modalType == 'ignoreIds'">
           <h2>Ignore CAN IDs</h2>
-          <p>Enter the CAN IDs you want to ignore (in hexadecimal format):</p>
-          <Multiselect 
-          ref="ignoredIDsMultiselect"
-          v-model="ignoredIDs" 
-          mode="tags" 
-          :searchable="true" 
-          placeholder="Enter CAN IDs" 
-          :show-labels="false" 
-          :taggable="true"
-          :addTagOn="['enter', 'space', ';', ',']"
-          :showOptions="false"
-          :createTag="true"
-          @blur="handleBlur"
-          />
-
-            <!-- space for user to add name of CAN ID set--> 
-          <input v-model="arrayName" placeholder="Enter a name for this set of ID's" />
-          <button @click="saveIgnoredIDs">Save</button>
           <!-- buttons to reapply saved sets-->
           <div id="saved-sets">
             <h3>Saved CAN ID Sets</h3>
-              <button
-                v-for="(set, index) in savedIgnoredIDs"
-                key="index" 
-                type="button" 
-                @click="selectIgnoredId(set)">
-                {{ set.name }}
-              </button>
+            <button v-for="(set, index) in savedIgnoredIDs" :key="index" type="button" @click="selectIgnoredId(set)">
+              {{ set.name }}
+            </button>
           </div>
+          <p>Enter the CAN IDs you want to ignore (in hexadecimal format):</p>
+          <Multiselect ref="ignoredIDsMultiselect" v-model="ignoredIDs" :allowAbsent="true" mode="tags"
+            :searchable="true" placeholder="Enter CAN IDs" :show-labels="false" :taggable="true"
+            :addTagOn="['enter', 'space', ';', ',']" :showOptions="false" :createTag="true" @focusout="handleBlur" />
+
+          <!-- space for user to add name of CAN ID set-->
+          <input v-model="arrayName" placeholder="Enter a name for this set of ID's" />
+          <button @click="saveIgnoredIDs">Save Set</button>
+          <button @click="uploadIgnoredIDs">Upload</button>
         </div>
 
         <div v-else-if="modalType == 'maskConfig'">
@@ -76,10 +68,11 @@
           <p>Matching IDs:</p>
           <div class="scroll-container">
             <ul>
-              <li v-for="id in findMatchingIDs(selectedIds[mask.index], parseInt(mask.value, 16))" :key="id">{{ id }}</li>
+              <li v-for="id in findMatchingIDs(selectedIds[mask.index], parseInt(mask.value, 16))" :key="id">{{ id }}
+              </li>
             </ul>
           </div>
-          
+
           <button @click="saveMaskValue">Save</button>
         </div>
       </Modal>
@@ -121,16 +114,14 @@
   </div>
 </template>
 
-
-
-
-
 <script>
 import Multiselect from '@vueform/multiselect';
 import MessageStatus from '@/components/MessageStatus.vue';
 import Modal from '@/components/Modal.vue';
 import '@vueform/multiselect/themes/default.css';
 import axios from 'axios';
+import io from 'socket.io-client';
+import { useWebWorkerFn } from '@vueuse/core'
 
 export default {
   components: {
@@ -146,7 +137,9 @@ export default {
       canMessages: [], // Array to store the CAN messages
       uniqueIds: [], // Unique CAN IDs from the uploaded file
       error: "", // Error message for file processing
+      selectedIds: [], // Selected CAN IDs for each serial port
       showModal: false,
+      loading: false,
       modalType: '',
       ignoredIDs: [],
       arrayName: '',
@@ -162,18 +155,28 @@ export default {
         startTime: 0,
       },
       simulationStartTime: null,
+      simulationRunning: false,
       mask: {
         value: '0x7FF',
         port: null,
         index: null,
       },
-      // property to hold saved ignored sets
     };
   },
   async mounted() {
     await this.loadPreviouslyConnectedPorts();
     // Load any previously saved ignored ID sets from local storage
     this.loadSavedIgnoredIDs();
+  },
+  created() {
+    this.socket = io('http://localhost:5000');
+    this.socket.on('simulation_complete', async () => {
+      console.log('Simulation complete.');
+      this.simulationRunning = false;
+      this.loading = true;
+      await this.processReceivedMessages();
+      this.loading = false;
+    });
   },
   async beforeUnmount() {
     console.log("Closing all ports...");
@@ -187,7 +190,6 @@ export default {
       if ("serial" in navigator) {
         try {
           const ports = await navigator.serial.getPorts();
-          this.selectedIds = this.loadSelectedIds(ports.length);
           for (const port of ports) {
             this.connectPort(port);
           }
@@ -199,31 +201,17 @@ export default {
       }
     },
 
-    onTag(newTag) {
-      return {ID: newTag };
-    },
     handleBlur() {
       const multiselect = this.$refs.ignoredIDsMultiselect;
       if (multiselect) {
         const inputEl = multiselect.$el.querySelector('input');
         if (inputEl && inputEl.value.trim() !== '') {
           const newTag = inputEl.value.trim();
-          // Push an object with property 'ID'
-          this.ignoredIDs.push({ ID: newTag });
+          this.ignoredIDs.push(newTag);
           inputEl.value = '';
         }
       }
     },
-
-    watch: {
-      ignoredIDs(newVal) {
-        this.ignoredIDs = newVal.map(item =>
-          typeof item === 'string' ? { ID: item } : item
-        );
-      }
-    },
-
-
 
     // Connect to a specific port and retrieve its name
     async connectPort(port) {
@@ -242,6 +230,8 @@ export default {
           deviceName: null, // Initially, device name is unknown
           buffer: "",
           messages: [],
+          messageMap: null,
+          worker: null,
           mask: '0x7FF',
         };
         this.serialPorts.push(serialPortData);
@@ -281,10 +271,9 @@ export default {
       this.serialPorts.forEach((portData, index) => {
         this.uploadIgnoredIDsToECU(index);
       });
-      //send the ignored ID's to Local Storage
-      localStorage.setItem('ignoredIDs', JSON.stringify(this.ignoredIDs));
       this.showModal = false;
     },
+
     saveIgnoredIDs() {
       if (this.arrayName.trim() === '') {
         alert('Please enter a name for the array.');
@@ -308,8 +297,6 @@ export default {
       this.arrayName = '';
       this.ignoredIDs = [];
     },
-
-
 
     // Upload the ignored IDs to the ECU
     async uploadIgnoredIDsToECU(index) {
@@ -338,12 +325,11 @@ export default {
         savedArrays = [];
       }
       this.savedIgnoredIDs = savedArrays;
-      console.log("Loaded savedIgnoredIDs:", this.savedIgnoredIDs);
-      },
+    },
 
     selectIgnoredId(savedSet) {
       // Set ignoredIDs to the saved array of strings.
-      this.ignoredIDs = savedSet.ids.slice();
+      this.ignoredIDs = savedSet.ids;
       this.arrayName = savedSet.name;
     },
 
@@ -368,11 +354,17 @@ export default {
 
     // Upload the selected CAN IDs to all connected ECU ports that have selected IDs
     async uploadToECUs() {
-      this.serialPorts.forEach((portData, index) => {
-        if (this.selectedIds[index].length > 0) {
-          this.uploadToECU(index);
-        }
-      });
+      this.loading = true;
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await Promise.all(
+        this.serialPorts.map((portData, index) => {
+          if (this.selectedIds[index].length > 0) {
+            return this.uploadToECU(index); // Return the promise
+          }
+          return Promise.resolve(); // No-op for ports without selected IDs
+        })
+      );
+      this.loading = false;
     },
 
     // Method to upload the selected IDs to the ECU
@@ -382,17 +374,32 @@ export default {
 
       // Use the findMatchingIDs function to get the matching IDs based on the mask
       const matchingIDs = this.findMatchingIDs(selected, mask);
-      
+
       if (matchingIDs.length === 0) {
         alert('No matching CAN IDs found.');
         return;
       }
 
-      let ecuMessages = this.canMessages
+      let ecuMessages = [];
+      let messageMap = new Map();
+
+      this.canMessages
         .filter((message) => matchingIDs.includes(message.id.toString(16).toUpperCase())) // Compare as hex strings
-        .map((message) => ({ text: `${message.id}#${message.data}`, status: "unreceived", timestamp: null }));
+        .forEach((message, index) => {
+          const text = `${message.id}#${message.data}`;
+          const entry = { text, status: "unreceived", timestamp: null };
+
+          ecuMessages.push(entry);
+
+          // Maintain an ordered list of indices for each message content
+          if (!messageMap.has(text)) {
+            messageMap.set(text, []);
+          }
+          messageMap.get(text).push(index); // Store index to support duplicates
+        });
 
       this.serialPorts[index].messages = ecuMessages;
+      this.serialPorts[index].messageMap = messageMap;
 
       // Format the message as required: "upload:["XXX","XXX","XXX"]:end"
       const formattedMessage = `upload:{"ids":[${selected.map(id => `"${id}"`).join(',')}],"mask":${mask}}:end`;
@@ -420,63 +427,104 @@ export default {
         portData.deviceName = deviceName;
         return;
       }
-      portData.consoleOutput += value;
-      portData.buffer += value;
 
-      // Check for and process complete messages
-      let startIndex = portData.buffer.indexOf("recv:");
-      let endIndex = portData.buffer.indexOf(":endrecv", startIndex);
-
-      while (startIndex !== -1 && endIndex !== -1) {
-        // Extract the complete message
-        const completeMessage = portData.buffer.slice(startIndex, endIndex + 8); // Include ':endrecv'
-
-        // Process the message
-        this.processReceivedMessage(portData, completeMessage);
-
-        // Remove the processed message from the buffer
-        portData.buffer = portData.buffer.slice(endIndex + 8);
-
-        // Look for the next complete message
-        startIndex = portData.buffer.indexOf("recv:");
-        endIndex = portData.buffer.indexOf(":endrecv", startIndex);
+      if (this.simulationRunning) {
+        portData.buffer += value;
+      }
+      else {
+        portData.consoleOutput += value;
       }
     },
 
-    // Process the received message and update the status
-    processReceivedMessage(portData, message) {
-      console.log("Received message:", message);
+    async processReceivedMessages() {
+      const results = await Promise.all(
+        this.serialPorts.map(async (portData) => {
+          const { workerFn, terminate } = useWebWorkerFn((portData) => {
+            const messages = JSON.parse(portData.messages);
+            const messageMap = portData.messageMap ? new Map(JSON.parse(portData.messageMap)) : new Map();
+            let consoleOutput = "";
 
-      // Remove 'recv:' and ':endrecv' from the message
-      const cleanMessage = message.replace(/^recv:/, '').replace(/:endrecv$/, '');
+            const lines = portData.buffer.split('\n');
 
-      // Split the message into parts based on '#'
-      const messageParts = cleanMessage.split('#');
+            // Process each line sequentially to maintain the order within the serial port
+            for (const line of lines) {
+              const message = line.trim();
 
-      // Assuming the format is ID#data#timestamp, extract relevant data
-      const messageContent = `${messageParts[0]}#${messageParts[1]}`;
-      const timestamp = parseInt(messageParts[2], 10); // 'timestamp' part, convert to integer
+              // Check if the line starts with 'recv:' and ends with ':endrecv'
+              if (message.startsWith('recv:') && message.endsWith(':endrecv')) {
+                if (!message.includes('#')) {
+                  consoleOutput += `Malformed message: ${message}\n`;
+                  continue;
+                }
 
-      // Find the message in the portData that matches the content and is unreceived
-      const messageIndex = portData.messages.findIndex((m) => m.text === messageContent && m.status === "unreceived");
+                // Remove 'recv:' and ':endrecv' from the message
+                const cleanMessage = message.replace(/^recv:/, '').replace(/:endrecv$/, '');
+                const [id, data, timestampStr] = cleanMessage.split('#');
+                if (!id || !data || isNaN(timestampStr)) {
+                  consoleOutput += `Invalid message format: ${message}\n`;
+                  continue;
+                }
 
-      if (messageIndex !== -1) {
-        // Update status and timestamp if message was found
-        portData.messages[messageIndex].status = "received";
-        portData.messages[messageIndex].timestamp = timestamp;
-      } else {
-        // Add new message with 'unexpected' status if not found
-        portData.messages.push({ text: messageContent, status: "unexpected", timestamp });
-      }
+                const messageContent = `${id}#${data}`;
+                const timestamp = parseInt(timestampStr, 10);
+
+                // Get the indices of the message content in the message map (for faster lookup)
+                let messageIndices = messageMap.get(messageContent) || [];
+                let nextMessageIndex = messageIndices.shift();
+
+                // If the message content is not found, add it as an unexpected message
+                if (nextMessageIndex === undefined) {
+                  messages.push({ text: messageContent, status: "unexpected", timestamp });
+                }
+                // If the message content is found, update the status and timestamp
+                else {
+                  messages[nextMessageIndex].status = "received";
+                  messages[nextMessageIndex].timestamp = timestamp;
+
+                  // Update the message map with the remaining indices
+                  if (messageIndices.length > 0) {
+                    messageMap.set(messageContent, messageIndices);
+                  }
+                  // If there are no more indices, delete the message content from the map
+                  else {
+                    messageMap.delete(messageContent);
+                  }
+                }
+
+              } else {
+                consoleOutput += `${message}\n`;
+              }
+            }
+            portData.buffer = '';
+            return { messages: messages, consoleOutput: consoleOutput };
+          });
+          portData.worker = workerFn;
+          portData.terminateWorker = terminate;
+          const messagesJson = JSON.stringify(portData.messages);
+          const messageMapJson = JSON.stringify(portData.messageMap ? Array.from(portData.messageMap) : null);
+          const result = await portData.worker({ buffer: portData.buffer, messages: messagesJson, messageMap: messageMapJson });
+          return result;
+        })
+      );
+      this.serialPorts.forEach((portData, index) => {
+        portData.messages = results[index].messages;
+        portData.consoleOutput += results[index].consoleOutput;
+      });
+      console.log('Received messages processed.');
     },
-
 
     saveSelectedIds() {
-      localStorage.setItem('selectedIds', JSON.stringify(this.selectedIds));
+      this.serialPorts.forEach((portData, index) => {
+        localStorage.setItem(`selectedIds-${portData.deviceName}`, JSON.stringify(this.selectedIds[index]));
+      });
     },
     loadSelectedIds(length) {
-      const savedIds = localStorage.getItem('selectedIds');
-      return savedIds ? JSON.parse(savedIds) : Array(length).fill([]);
+      // Load selected IDs from local storage based on the device name
+      return Array.from({ length }, (_, index) => {
+        const deviceName = this.serialPorts[index].deviceName;
+        const savedIds = localStorage.getItem(`selectedIds-${deviceName}`);
+        return savedIds ? JSON.parse(savedIds) : [];
+      });
     },
 
     findMatchingIDs(filteredIDs, mask) {
@@ -488,7 +536,7 @@ export default {
         for (const filteredID of filteredIDs) {
           // Apply the mask to the current ID and the filtered ID
           if ((id & mask) === (filteredID & mask)) {
-            matchingIDs.push(id.toString(16).toUpperCase()); // Convert to hexadecimal
+            matchingIDs.push(id.toString(16).toUpperCase().padStart(3, '0'));
             break; // No need to check other filtered IDs for this ID
           }
         }
@@ -576,10 +624,14 @@ export default {
         return;
       }
 
+      this.loading = true;
+      this.selectedIds = this.loadSelectedIds(this.serialPorts.length);
+
       const reader = new FileReader();
       reader.onload = (e) => {
         this.fileContent = e.target.result;
         this.processFile(this.fileContent);
+        this.loading = false;
       };
       reader.readAsText(file);
     },
@@ -593,6 +645,7 @@ export default {
         console.log("CAN Data:", this.canData);
         this.error = '';
       } catch (err) {
+        this.loading = false;
         this.error = 'Error processing file';
         console.error(err);
       }
@@ -674,38 +727,6 @@ export default {
       }
     },
 
-    async uploadToSender() {
-      console.log('Uploading to Sender...');
-      const senderPort = this.serialPorts.find((port) => port.deviceName === "Sender");
-
-      if (!senderPort) {
-        console.error('No port named "Sender" found.');
-        return;
-      }
-
-      const textEncoder = new TextEncoder();
-      const writer = senderPort.port.writable.getWriter();
-
-      try {
-        // Send data in smaller chunks
-        const chunkSize = 1024; // Adjust chunk size as needed
-        const jsonString = "upload:" + JSON.stringify(this.canMessages) + ":end\n";
-        let offset = 0;
-
-        while (offset < jsonString.length) {
-          const chunk = jsonString.slice(offset, offset + chunkSize);
-          console.log(chunk)
-          await writer.write(textEncoder.encode(chunk + "\n"));
-          offset += chunkSize;
-        }
-
-        console.log(`Sent messages to Sender`);
-        writer.releaseLock();
-      } catch (error) {
-        console.error('Error getting writer for Sender:', error);
-      }
-    },
-
     // Begin the simulation by sending the CAN messages to the "Sender" port
     async beginSimulation() {
       if (this.simulationStartTime) {
@@ -725,12 +746,14 @@ export default {
           bitrate: 500000         // Default bitrate
         };
 
+        this.simulationRunning = true;
         const response = await axios.post('http://localhost:5000/start_simulation', payload);
         this.simulationStatus = response.data.message;
         console.log('Simulation started successfully:', response.data);
       } catch (error) {
         console.error('Error starting simulation:', error.response?.data || error.message);
         this.simulationStatus = error.response?.data?.message || 'Failed to start simulation.';
+        this.simulationRunning = false;
       }
 
       this.simulationStartTime = Date.now();
@@ -758,11 +781,16 @@ input {
 }
 
 .scroll-container {
-  height: 300px; /* Adjust height as needed */
-  overflow-y: auto; /* Enable vertical scrolling */
-  border: 1px solid #ccc; /* Optional: Add a border for visibility */
-  padding: 10px; /* Optional: Add some padding */
-  background-color: #f9f9f9; /* Optional: Set a background color */
+  height: 300px;
+  /* Adjust height as needed */
+  overflow-y: auto;
+  /* Enable vertical scrolling */
+  border: 1px solid #ccc;
+  /* Optional: Add a border for visibility */
+  padding: 10px;
+  /* Optional: Add some padding */
+  background-color: #f9f9f9;
+  /* Optional: Set a background color */
 }
 
 .select-container,
@@ -806,5 +834,43 @@ input[type="number"]::-webkit-inner-spin-button {
 
 .configure-button:hover {
   background-color: #0056b3;
+}
+
+/* Overlay style */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  /* Semi-transparent black background */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: white;
+  font-size: 20px;
+  z-index: 9999;
+  /* Ensure it's above all other content */
+}
+
+.loading-spinner {
+  border: 4px solid rgba(255, 255, 255, 0.3);
+  border-top: 4px solid white;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  margin-right: 10px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
 }
 </style>
