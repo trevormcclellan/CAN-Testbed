@@ -3,11 +3,24 @@
 #include <EEPROM.h>
 #include <ArduinoJson.h>
 #include <ArduinoQueue.h>
+#include <LiquidCrystal.h>
 
 #define SPI_CS_PIN 9
 MCP_CAN CAN(SPI_CS_PIN);
 
-int button = 21;
+// LCD pin connections: RS, E, D4, D5, D6, D7
+LiquidCrystal lcd(10, 19, 21, 22, 23, 24);
+
+const unsigned long CAN_ID_SAS11 = 0x2B0; // CAN ID for SAS11 (688 decimal)
+const float ANGLE_SCALE_FACTOR = 0.1;
+const int MAX_ANGLE = 400; // Max visualized steering angle
+
+// Custom characters for the bar display
+byte borderMiddle[8] = {0b11111, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111};
+byte borderLeft[8] = {0b11111, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111};
+byte borderRight[8] = {0b11111, 0b00001, 0b00001, 0b00001, 0b00001, 0b00001, 0b00001, 0b11111};
+byte barFill[8] = {0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111};
+
 int led = 18;
 String deviceName;
 const int MAX_HW_FILTERS = 6; // MCP2515 supports 6 filters
@@ -15,11 +28,6 @@ int selectedIds[20];          // Example size for selected IDs (can hold up to 2
 int numSelectedIds = 0;
 int ignoredIds[20]; // Example size for ignored IDs (can hold up to 20)
 int numIgnoredIds = 0;
-
-int buttonState = 0;
-int lastButtonState = 0;
-unsigned char hazardsOff[8] = {0x03, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x1C};
-unsigned char hazardsOn[8] = {0x03, 0x01, 0x08, 0x00, 0x02, 0x00, 0x00, 0x5C};
 
 // Replay configuration
 String replayId;
@@ -327,9 +335,28 @@ void setup()
 {
   Serial.begin(115200);
   pinMode(led, OUTPUT);
-  pinMode(button, INPUT_PULLUP);
   EEPROM.begin(512);
   readDeviceName();
+
+  // Initialize LCD and load custom characters
+  lcd.begin(16, 2);
+  lcd.createChar(0, borderLeft);
+  lcd.createChar(1, borderRight);
+  lcd.createChar(2, borderMiddle);
+  lcd.createChar(3, barFill);
+
+  lcd.setCursor(0, 0);
+  lcd.print(" Steering Angle");
+  lcd.setCursor(0, 1);
+  lcd.write(byte(0));
+
+  for (uint8_t i = 1; i < 15; i++)
+  {
+    lcd.setCursor(i, 1);
+    lcd.write(byte(2));
+  }
+  lcd.setCursor(15, 1);
+  lcd.write(byte(1));
 
   if (CAN.begin(CAN_500KBPS) != CAN_OK)
   {
@@ -351,38 +378,8 @@ void setup()
   }
 }
 
-void flashHazards()
-{
-  unsigned long startTime = millis();
-  while (millis() - startTime < 5000)
-  { // Run for 5 seconds
-    // Send message 1 five times (every 40 ms)
-    for (int i = 0; i < 5; i++)
-    {
-      CAN.sendMsgBuf(0x541, 0, 8, hazardsOff);
-      delay(60);
-    }
-
-    // Send message 2 six times (every 40 ms)
-    for (int i = 0; i < 6; i++)
-    {
-      CAN.sendMsgBuf(0x541, 0, 8, hazardsOn);
-      delay(60);
-    }
-  }
-}
-
 void loop()
 {
-  buttonState = digitalRead(button);
-
-  if (buttonState == LOW && lastButtonState == HIGH)
-  {
-    flashHazards();
-  }
-
-  lastButtonState = buttonState;
-
   if (Serial.available() > 0)
   {
     String command = Serial.readStringUntil('\n');
@@ -445,6 +442,40 @@ void loop()
     msg = "recv:" + msg + ":endrecv";
     enqueueMessage(msg);
 
+    if (canId == CAN_ID_SAS11)
+    {
+      int16_t rawAngle = ((int16_t)buf[1] << 8) | buf[0]; // Extract 16-bit signed steering angle
+      float steeringAngle = rawAngle * ANGLE_SCALE_FACTOR;
+
+      if (steeringAngle <= MAX_ANGLE)
+      {
+        // Display numeric angle value
+        lcd.setCursor(0, 0);
+        lcd.print(" Angle: ");
+        lcd.print(steeringAngle, 1);
+        lcd.print("   ");
+
+        // Clear bar and update visualization
+        int filledBlocks = map(abs(steeringAngle), 0, MAX_ANGLE, 0, 8);
+
+        if (steeringAngle > 0)
+        {
+          for (int i = 8; i <= 15; i++)
+          {
+            lcd.setCursor(i, 1);
+            lcd.write((i <= 7 + filledBlocks) ? byte(3) : ((i == 15) ? byte(1) : byte(2)));
+          }
+        }
+        else if (steeringAngle < 0)
+        {
+          for (int i = 7; i >= 0; i--)
+          {
+            lcd.setCursor(i, 1);
+            lcd.write((i >= 8 - filledBlocks) ? byte(3) : ((i == 0) ? byte(0) : byte(2)));
+          }
+        }
+      }
+    }
     // Handle replay logic
     if (replayConfigured && !replayTriggered)
     {

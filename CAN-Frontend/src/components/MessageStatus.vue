@@ -31,19 +31,6 @@
         }
         return currentTimestamp; // Default to showing the raw timestamp if no messages exist
       },
-      // If you want to pass a message back to the parent to be handled there
-      handleMessage(newMessage) {
-        // Check if the message already exists in the list
-        const existingMessage = this.messages.find(message => message.text === newMessage.text);
-  
-        if (existingMessage) {
-          // If message exists, update its status to 'received'
-          existingMessage.status = 'received';
-        } else {
-          // If message does not exist, add it with a 'new' status
-          this.messages.push({ text: newMessage.text, status: 'new' });
-        }
-      }
     }
   };
   </script>
