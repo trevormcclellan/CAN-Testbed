@@ -1,5 +1,10 @@
 <template>
   <div>
+    <!-- Loading Overlay -->
+    <div v-if="loading" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <p>Loading...</p>
+    </div>
     <div>
       <Modal v-model:visible="showModal">
         <div v-if="modalType == 'attackConfig'" class="attack-config">
@@ -123,6 +128,7 @@ export default {
       error: "", // Error message for file processing
       selectedIds: [], // Selected CAN IDs for each serial port
       showModal: false,
+      loading: false,
       modalType: '',
       ignoredIDs: [],
       attack: {
@@ -149,10 +155,12 @@ export default {
   },
   created() {
     this.socket = io('http://localhost:5000');
-    this.socket.on('simulation_complete', () => {
+    this.socket.on('simulation_complete', async () => {
       console.log('Simulation complete.');
       this.simulationRunning = false;
-      this.processReceivedMessages();
+      this.loading = true;
+      await this.processReceivedMessages();
+      this.loading = false;
     });
   },
   async beforeUnmount() {
@@ -280,11 +288,17 @@ export default {
 
     // Upload the selected CAN IDs to all connected ECU ports that have selected IDs
     async uploadToECUs() {
-      this.serialPorts.forEach((portData, index) => {
-        if (this.selectedIds[index].length > 0) {
-          this.uploadToECU(index);
-        }
-      });
+      this.loading = true;
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await Promise.all(
+        this.serialPorts.map((portData, index) => {
+          if (this.selectedIds[index].length > 0) {
+            return this.uploadToECU(index); // Return the promise
+          }
+          return Promise.resolve(); // No-op for ports without selected IDs
+        })
+      );
+      this.loading = false;
     },
 
     // Method to upload the selected IDs to the ECU
@@ -419,10 +433,10 @@ export default {
             return { messages: messages, consoleOutput: consoleOutput };
           });
           portData.worker = workerFn;
-          portData.terminate = terminate;
-          const messgaesJson = JSON.stringify(portData.messages);
+          portData.terminateWorker = terminate;
+          const messagesJson = JSON.stringify(portData.messages);
           const messageMapJson = JSON.stringify(portData.messageMap ? Array.from(portData.messageMap) : null);
-          const result = await portData.worker({ buffer: portData.buffer, messages: messgaesJson, messageMap: messageMapJson });
+          const result = await portData.worker({ buffer: portData.buffer, messages: messagesJson, messageMap: messageMapJson });
           return result;
         })
       );
@@ -456,7 +470,7 @@ export default {
         for (const filteredID of filteredIDs) {
           // Apply the mask to the current ID and the filtered ID
           if ((id & mask) === (filteredID & mask)) {
-            matchingIDs.push(id.toString(16).toUpperCase().padStart(3, '0')); 
+            matchingIDs.push(id.toString(16).toUpperCase().padStart(3, '0'));
             break; // No need to check other filtered IDs for this ID
           }
         }
@@ -544,12 +558,14 @@ export default {
         return;
       }
 
+      this.loading = true;
       this.selectedIds = this.loadSelectedIds(this.serialPorts.length);
 
       const reader = new FileReader();
       reader.onload = (e) => {
         this.fileContent = e.target.result;
         this.processFile(this.fileContent);
+        this.loading = false;
       };
       reader.readAsText(file);
     },
@@ -563,6 +579,7 @@ export default {
         console.log("CAN Data:", this.canData);
         this.error = '';
       } catch (err) {
+        this.loading = false;
         this.error = 'Error processing file';
         console.error(err);
       }
@@ -641,38 +658,6 @@ export default {
         this.showModal = false;
       } catch (error) {
         console.error('Error configuring replay attack:', error);
-      }
-    },
-
-    async uploadToSender() {
-      console.log('Uploading to Sender...');
-      const senderPort = this.serialPorts.find((port) => port.deviceName === "Sender");
-
-      if (!senderPort) {
-        console.error('No port named "Sender" found.');
-        return;
-      }
-
-      const textEncoder = new TextEncoder();
-      const writer = senderPort.port.writable.getWriter();
-
-      try {
-        // Send data in smaller chunks
-        const chunkSize = 1024; // Adjust chunk size as needed
-        const jsonString = "upload:" + JSON.stringify(this.canMessages) + ":end\n";
-        let offset = 0;
-
-        while (offset < jsonString.length) {
-          const chunk = jsonString.slice(offset, offset + chunkSize);
-          console.log(chunk)
-          await writer.write(textEncoder.encode(chunk + "\n"));
-          offset += chunkSize;
-        }
-
-        console.log(`Sent messages to Sender`);
-        writer.releaseLock();
-      } catch (error) {
-        console.error('Error getting writer for Sender:', error);
       }
     },
 
@@ -783,5 +768,43 @@ input[type="number"]::-webkit-inner-spin-button {
 
 .configure-button:hover {
   background-color: #0056b3;
+}
+
+/* Overlay style */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  /* Semi-transparent black background */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: white;
+  font-size: 20px;
+  z-index: 9999;
+  /* Ensure it's above all other content */
+}
+
+.loading-spinner {
+  border: 4px solid rgba(255, 255, 255, 0.3);
+  border-top: 4px solid white;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  margin-right: 10px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
 }
 </style>
