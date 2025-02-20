@@ -91,10 +91,18 @@
       <p>No serial ports connected.</p>
     </div>
     <div v-for="(port, index) in serialPorts" :key="port.info">
-      <h2>Console {{ index + 1 }} - {{ port.deviceName || 'Unknown Device' }}</h2>
-      <div>
-        <textarea v-model="port.consoleOutput" rows="10" cols="50" readonly></textarea>
-      </div>
+      <h2>Console {{ index + 1 }} - {{ port.deviceName || 'Unknown Device' }}</h2>        
+      <!-- Identify Button-->
+         <button @click="identifyPort(port)">Identify</button>
+         <!-- Toggle Console Button-->
+          <button @click="toggleConsole(port)">
+            {{ port.showConsole ? 'Hide Console' : 'Show Console' }}
+          </button>
+          <!-- Console hidden by default-->
+           <div v-if="port.showConsole" class="console-output">
+            <textarea v-model="port.consoleOutput" rows ="10" cols="50" readonly></textarea>
+           </div>
+
       <input v-model="port.inputData" type="text" placeholder="Type a message..." />
       <div>
         <label for="selectIds">Select up to 6 IDs:</label>
@@ -102,10 +110,28 @@
           :searchable="true" :options="uniqueIds" placeholder="Select CAN IDs" label="ID" track-by="ID"
           :show-labels="false" :max="6" />
       </div>
-      <h3>Messages</h3>
+        <div class="help-container">
+        <h3>Messages
+            <span
+            class="help-icon"
+            @mouseenter="showMessageHelp = true"
+            @mouseleave="showMessageHelp = false"
+            >
+            (?)
+            </span>
+        </h3>
+        <!--Help Text-->
+        <div v-if="showMessageHelp" class="help-text">
+             <p>
+                 This section displays CAN messages received from the connected board.
+            </p>
+        </div>
+        </div>
+
       <div class="scroll-container">
         <MessageStatus ref="messageStatus" :messages="port.messages" />
       </div>
+
       <button @click="sendData(port, index)">Send</button>
       <button @click="closePort(port)">Close Port</button>
       <button @click="configureMask(port, index)">Configure Mask</button>
@@ -131,7 +157,16 @@ export default {
   },
   data() {
     return {
-      serialPorts: [], // List of connected serial ports
+        serialPorts: [ //Simulated Serial conneciton
+            {
+                info: "Simulated Port 1",
+                deviceName: "Virtual COM1",
+                consoleOutput: "Simulated console output...",
+                inputData: "",
+                messages: [],
+                showConsole: false,            }
+      ], // List of connected serial ports
+      showMessageHelp: false,      
       fileContent: "", // Content of the uploaded file
       canData: null, // Parsed CAN data from the uploaded file
       canMessages: [], // Array to store the CAN messages
@@ -201,6 +236,14 @@ export default {
       }
     },
 
+    toggleConsole(port) {
+        if (!port.hasOwnProperty('showConsole')) {
+         this.$set(port, 'showConsole', false); // Ensure reactivity
+        }
+        port.showConsole = !port.showConsole;
+      },
+
+  
     handleBlur() {
       const multiselect = this.$refs.ignoredIDsMultiselect;
       if (multiselect) {
@@ -864,6 +907,45 @@ input[type="number"]::-webkit-inner-spin-button {
   animation: spin 1s linear infinite;
 }
 
+/* Adjust spacing and alignment of (?) icon */
+.help-icon {
+  cursor: pointer;
+  margin-left: 6px;
+  color: #333;
+  font-size: 0.9em;
+  background: #e0e0e0; /* Light gray background */
+  padding: 1px 6px;
+  border-radius: 8px; 
+  display: inline-block;
+  text-align: center;
+  font-weight: bold;
+  vertical-align: middle; 
+}
+
+
+.help-text {
+  background: #fff9c4;
+  padding: 8px 12px;
+  margin-top: 5px;
+  border: 1px solid #ffd54f;
+  border-radius: 4px;
+  max-width: 600px;
+  font-size: 14px;
+  color: #333;
+  position: absolute;
+  z-index: 10;
+  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.3);
+  text-align: left; 
+  line-height: 1.4; 
+}
+
+
+.help-container {
+  position: relative;
+  display: inline-block;
+}
+
+  
 @keyframes spin {
   0% {
     transform: rotate(0deg);
