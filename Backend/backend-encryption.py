@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 import can
 import time
 import threading
@@ -8,6 +9,7 @@ from Crypto.Cipher import ChaCha20
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes and origins
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 can_messages = []
 
@@ -100,13 +102,7 @@ def start_simulation():
             for message in sorted(can_messages, key=lambda x: x['timestamp']):
                 elapsed_time = time.time() - start_time
                 time_to_wait = message['timestamp'] - elapsed_time
-                
-                # time_to_wait = start_time + message['timestamp'] - time.time()
-                # time_to_wait = 0.01
-                # print(message['timestamp'])
-                # if time_to_wait <= 0:
-                #     if prev_time_to_wait is not None and prev_time_to_wait <= 0:
-                #         time_to_wait = 0.01
+
                 if time_to_wait > 0:
                     time.sleep(time_to_wait)
 
@@ -120,11 +116,10 @@ def start_simulation():
                 )
                 try:
                     bus.send(can_message)
-                    # print(f"Num Skips: {num_skips}")
-                    # print(f"Sent: {can_message}")
                 except can.CanError as e:
                     print(f"Failed to send message: {e}")
 
+            socketio.emit('simulation_complete', {'status': 'Simulation completed successfully'})
         except Exception as e:
             print(f"Error during simulation: {e}")
         finally:
@@ -137,4 +132,4 @@ def start_simulation():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    socketio.run(app, host='0.0.0.0', port=5000)

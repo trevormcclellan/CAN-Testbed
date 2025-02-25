@@ -8,15 +8,15 @@
     <div>
       <Modal v-model:visible="showModal">
         <div v-if="modalType == 'attackConfig'" class="attack-config">
-          <h2>Select an Attack Type</h2>
+          <!-- <h2>Select an Attack Type</h2>
           <div class="select-container">
             <label for="attackType">Attack Type:</label>
             <select id="attackType" v-model="attack.type" class="styled-select">
               <option value="replay">Replay</option>
             </select>
-          </div>
-          <div v-if="attack.type === 'replay'" class="replay-config">
-            <h3>Replay Attack Configuration</h3>
+          </div> -->
+          <div class="replay-config">
+            <h3>Message Injection Configuration</h3>
             <form @submit.prevent="configureReplay">
               <div class="form-group">
                 <label for="message">Message (ID#DATA):</label>
@@ -136,7 +136,7 @@
       <button @click="sendData(port, index)">Send</button>
       <button @click="closePort(port)">Close Port</button>
       <button @click="configureMask(port, index)">Configure Mask</button>
-      <button @click="configureAttack(port)">Configure Attack</button>
+      <button @click="configureAttack(port)">Configure Injection</button>
     </div>
   </div>
 </template>
