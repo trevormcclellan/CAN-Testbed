@@ -283,6 +283,7 @@ export default {
           port,
           reader,
           consoleOutput: "",
+          showConsole: false,
           inputData: "",
           deviceName: null, // Initially, device name is unknown
           buffer: "",
