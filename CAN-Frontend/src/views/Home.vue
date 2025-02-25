@@ -93,7 +93,7 @@
     <div v-for="(port, index) in serialPorts" :key="port.info">
       <h2>Console {{ index + 1 }} - {{ port.deviceName || 'Unknown Device' }}</h2>        
       <!-- Identify Button-->
-         <button @click="identifyPort(port)">Identify</button>
+      <button @click="sendIdentify(port)">Identify</button>
          <!-- Toggle Console Button-->
           <button @click="toggleConsole(port)">
             {{ port.showConsole ? 'Hide Console' : 'Show Console' }}
@@ -123,12 +123,13 @@
         <!--Help Text-->
         <div v-if="showMessageHelp" class="help-text">
              <p>
-                 This section displays CAN messages received from the connected board.
+                 This section displays CAN messages received from the connected board. <br>
+                 If there are no messages, this section will be hidden.
             </p>
         </div>
         </div>
 
-      <div class="scroll-container">
+      <div v-if="port.messages.lenght > 0" class="scroll-container">
         <MessageStatus ref="messageStatus" :messages="port.messages" />
       </div>
 
@@ -141,6 +142,7 @@
 </template>
 
 <script>
+import SerialConnect from '@/views/SerialConnect.vue';
 import Multiselect from '@vueform/multiselect';
 import MessageStatus from '@/components/MessageStatus.vue';
 import Modal from '@/components/Modal.vue';
@@ -234,6 +236,10 @@ export default {
       } else {
         alert("Web Serial API is not supported in this browser.");
       }
+    },
+
+    sendIdentify(port) {
+      SerialConnect.methods.sendIdentify.call(this,port);
     },
 
     toggleConsole(port) {
@@ -929,7 +935,8 @@ input[type="number"]::-webkit-inner-spin-button {
   margin-top: 5px;
   border: 1px solid #ffd54f;
   border-radius: 4px;
-  max-width: 600px;
+  width: 500px;
+  max-width: 1000px;
   font-size: 14px;
   color: #333;
   position: absolute;
