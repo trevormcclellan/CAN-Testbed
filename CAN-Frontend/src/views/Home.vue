@@ -114,14 +114,14 @@
         <h3>Messages
             <span
             class="help-icon"
-            @mouseenter="showMessageHelp = true"
-            @mouseleave="showMessageHelp = false"
+            @mouseenter="showMessageHelp = index"
+            @mouseleave="showMessageHelp = null"
             >
             (?)
             </span>
         </h3>
         <!--Help Text-->
-        <div v-if="showMessageHelp" class="help-text">
+        <div v-if="showMessageHelp == index" class="help-text">
              <p>
                  This section displays CAN messages received from the connected board. <br>
                  If there are no messages, this section will be hidden.
@@ -168,7 +168,7 @@ export default {
                 messages: [],
                 showConsole: false,            }
       ], // List of connected serial ports
-      showMessageHelp: false,      
+      showMessageHelp: null,      
       fileContent: "", // Content of the uploaded file
       canData: null, // Parsed CAN data from the uploaded file
       canMessages: [], // Array to store the CAN messages
