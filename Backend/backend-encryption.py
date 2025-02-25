@@ -79,6 +79,7 @@ def start_simulation():
 
     # Setup CAN interface
     try:
+        subprocess.run(["sudo", "ip", "link", "set", interface, "down"], check=False)
         subprocess.run(
             ["sudo", "ip", "link", "set", interface, "up", "type", "can", "bitrate", str(bitrate)],
             check=True
