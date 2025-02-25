@@ -238,8 +238,16 @@ export default {
       }
     },
 
-    sendIdentify(port) {
-      SerialConnect.methods.sendIdentify.call(this,port);
+    async sendIdentify(portData) {
+      try {
+        const writer = portData.port.writable.getWriter();
+        const data = new TextEncoder().encode("identify\n");
+        await writer.write(data);
+        console.log('Sent "identify" command to port');
+        writer.releaseLock();
+      } catch (error) {
+        console.error('Failed to send "identify" command:', error);
+      }
     },
 
     toggleConsole(port) {
