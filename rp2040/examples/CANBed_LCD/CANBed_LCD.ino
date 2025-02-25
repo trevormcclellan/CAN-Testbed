@@ -458,7 +458,7 @@ void loop()
         // Clear bar and update visualization
         int filledBlocks = map(abs(steeringAngle), 0, MAX_ANGLE, 0, 8);
 
-        if (steeringAngle > 0)
+        if (steeringAngle < 0)
         {
           for (int i = 8; i <= 15; i++)
           {
@@ -466,7 +466,7 @@ void loop()
             lcd.write((i <= 7 + filledBlocks) ? byte(3) : ((i == 15) ? byte(1) : byte(2)));
           }
         }
-        else if (steeringAngle < 0)
+        else if (steeringAngle > 0)
         {
           for (int i = 7; i >= 0; i--)
           {
