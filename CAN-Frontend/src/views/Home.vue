@@ -129,7 +129,7 @@
         </div>
         </div>
 
-      <div v-if="port.messages.lenght > 0" class="scroll-container">
+      <div v-if="port.messages.length > 0" class="scroll-container">
         <MessageStatus ref="messageStatus" :messages="port.messages" />
       </div>
 
@@ -142,7 +142,6 @@
 </template>
 
 <script>
-import SerialConnect from '@/views/SerialConnect.vue';
 import Multiselect from '@vueform/multiselect';
 import MessageStatus from '@/components/MessageStatus.vue';
 import Modal from '@/components/Modal.vue';
@@ -162,6 +161,7 @@ export default {
         serialPorts: [ //Simulated Serial conneciton
             {
                 info: "Simulated Port 1",
+                buffer: "",
                 deviceName: "Virtual COM1",
                 consoleOutput: "Simulated console output...",
                 inputData: "",
