@@ -15,104 +15,101 @@
     <!-- Reusable Modal -->
     <Modal v-model:visible="showModal">
       <template #default>
-        <!-- (1) Configure Injection Modal reverted to original look -->
         <div v-if="modalType === 'attackConfig'" class="attack-config">
+          <h3>Message Injection Configuration</h3>
           <div class="form-group">
             <label for="message">
               Message (ID#DATA):
-              <span class="help-icon"
-                    @mouseenter="showHelp.message = true"
-                    @mouseleave="showHelp.message = false">
+              <span class="help-icon" @mouseenter="showHelp.message = true" @mouseleave="showHelp.message = false">
                 (?)
               </span>
             </label>
-            <input
-              id="message"
-              type="text"
-              placeholder="Enter the message"
-              v-model="replayConfig.message"
-            />
-            <div v-if="showHelp.message" class="help-text">
-              <p>Enter the CAN message in the format: ID#DATA (e.g., 0x123#112233).</p>
-            </div>
+            <input id="message" type="text" placeholder="Enter the message" v-model="replayConfig.message" />
+          </div>
+          <div v-if="showHelp.message" class="help-text">
+            <p>Enter the CAN message in the format: ID#DATA (e.g., 0x123#112233).</p>
           </div>
 
           <div class="form-group">
             <label for="repeat">
               Repeat:
-              <span class="help-icon"
-                    @mouseenter="showHelp.repeat = true"
-                    @mouseleave="showHelp.repeat = false">
+              <span class="help-icon" @mouseenter="showHelp.repeat = true" @mouseleave="showHelp.repeat = false">
                 (?)
               </span>
             </label>
-            <input
-              id="repeat"
-              type="number"
-              min="1"
-              placeholder="Enter the number of times"
-              v-model.number="replayConfig.repeat"
-            />
+            <input id="repeat" type="number" min="1" placeholder="Enter the number of times"
+              v-model.number="replayConfig.repeat" />
+            </div>
             <div v-if="showHelp.repeat" class="help-text">
               <p>Defines how many times the message should be sent. Minimum is 1.</p>
             </div>
-          </div>
 
           <div class="form-group">
             <label for="interval">
               Interval (ms):
-              <span class="help-icon"
-                    @mouseenter="showHelp.interval = true"
-                    @mouseleave="showHelp.interval = false">
+              <span class="help-icon" @mouseenter="showHelp.interval = true" @mouseleave="showHelp.interval = false">
                 (?)
               </span>
             </label>
-            <input
-              id="interval"
-              type="number"
-              min="0"
-              placeholder="Enter the interval"
-              v-model.number="replayConfig.interval"
-            />
+            <input id="interval" type="number" min="0" placeholder="Enter the interval"
+              v-model.number="replayConfig.interval" />
+            </div>
             <div v-if="showHelp.interval" class="help-text">
               <p>Time delay (in milliseconds) between repeated messages.</p>
             </div>
-          </div>
 
           <div class="form-group">
             <label for="startTime">
               Start Time (ms):
-              <span class="help-icon"
-                    @mouseenter="showHelp.startTime = true"
-                    @mouseleave="showHelp.startTime = false">
+              <span class="help-icon" @mouseenter="showHelp.startTime = true" @mouseleave="showHelp.startTime = false">
                 (?)
               </span>
             </label>
-            <input
-              id="startTime"
-              type="number"
-              min="0"
-              placeholder="Enter the start time"
-              v-model.number="replayConfig.startTime"
-            />
+            <input id="startTime" type="number" min="0" placeholder="Enter the start time"
+              v-model.number="replayConfig.startTime" />
+            </div>
             <div v-if="showHelp.startTime" class="help-text">
               <p>Delay before the first message is sent (in milliseconds).</p>
             </div>
-          </div>
 
           <button type="submit" class="configure-button" @click="configureReplay">
             Configure
           </button>
         </div>
 
-        <!-- Mask Configuration Modal (placeholder) -->
-        <div v-else-if="modalType === 'maskConfig'">
-          <!-- Your mask config content here -->
+        <div v-else-if="modalType == 'ignoreIds'">
+          <h2>Ignore CAN IDs</h2>
+          <!-- buttons to reapply saved sets-->
+          <div id="saved-sets">
+            <h3>Saved CAN ID Sets</h3>
+            <button v-for="(set, index) in savedIgnoredIDs" :key="index" type="button" @click="selectIgnoredId(set)">
+              {{ set.name }}
+            </button>
+          </div>
+          <p>Enter the CAN IDs you want to ignore (in hexadecimal format):</p>
+          <Multiselect ref="ignoredIDsMultiselect" v-model="ignoredIDs" :allowAbsent="true" mode="tags"
+            :searchable="true" placeholder="Enter CAN IDs" :show-labels="false" :taggable="true"
+            :addTagOn="['enter', 'space', ';', ',']" :showOptions="false" :createTag="true" @focusout="handleBlur" />
+
+          <!-- space for user to add name of CAN ID set-->
+          <input v-model="arrayName" placeholder="Enter a name for this set of ID's" />
+          <button @click="saveIgnoredIDs">Save Set</button>
+          <button @click="uploadIgnoredIDs">Upload</button>
         </div>
 
-        <!-- Ignore IDs Modal (placeholder) -->
-        <div v-else-if="modalType === 'ignoreIds'">
-          <!-- Your ignore-IDs content here -->
+        <div v-else-if="modalType == 'maskConfig'">
+          <h2>Configure Mask</h2>
+          <p>Enter the mask value (in hexadecimal format):</p>
+          <input type="text" v-model="mask.value" placeholder="Enter the mask value" />
+          <p>Matching IDs:</p>
+          <div class="scroll-container">
+            <ul>
+              <li v-for="id in findMatchingIDs(selectedIds[mask.index], parseInt(mask.value, 16))" :key="id">{{ id }}
+              </li>
+            </ul>
+          </div>
+
+          <button @click="saveMaskValue">Save</button>
         </div>
       </template>
     </Modal>
@@ -136,11 +133,7 @@
       <p>No serial ports connected.</p>
     </div>
 
-    <div
-      v-for="(port, index) in serialPorts"
-      :key="port.info"
-      class="console-section"
-    >
+    <div v-for="(port, index) in serialPorts" :key="port.info" class="console-section">
       <h2>
         Console {{ index + 1 }} - {{ port.deviceName || 'Unknown Device' }}
       </h2>
@@ -154,17 +147,9 @@
 
       <!-- (2) Hide console output when showConsole is false -->
       <div v-if="port.showConsole" class="console-container">
-        <textarea
-          class="console-output"
-          v-model="port.consoleOutput"
-          readonly
-        ></textarea>
+        <textarea class="console-output" v-model="port.consoleOutput" readonly></textarea>
 
-        <input
-          v-model="port.inputData"
-          type="text"
-          placeholder="Type a message..."
-        />
+        <input v-model="port.inputData" type="text" placeholder="Type a message..." />
 
         <div class="console-buttons">
           <button @click="sendData(port, index)">Send</button>
@@ -175,19 +160,9 @@
       <!-- CAN ID Selection -->
       <div>
         <label for="selectIds">Select up to 6 IDs:</label>
-        <Multiselect
-          @select="handleSelect"
-          @deselect="handleDeselect"
-          v-model="selectedIds[index]"
-          mode="tags"
-          :searchable="true"
-          :options="uniqueIds"
-          placeholder="Select CAN IDs"
-          label="ID"
-          track-by="ID"
-          :show-labels="false"
-          :max="6"
-        />
+        <Multiselect @select="handleSelect" @deselect="handleDeselect" v-model="selectedIds[index]" mode="tags"
+          :searchable="true" :options="uniqueIds" placeholder="Select CAN IDs" label="ID" track-by="ID"
+          :show-labels="false" :max="6" />
       </div>
 
       <div class="button-group">
@@ -198,11 +173,7 @@
       <div class="messages-header">
         <h3>
           Messages
-          <span
-            class="help-icon"
-            @mouseenter="showMessageHelp = index"
-            @mouseleave="showMessageHelp = null"
-          >
+          <span class="help-icon" @mouseenter="showMessageHelp = index" @mouseleave="showMessageHelp = null">
             (?)
           </span>
         </h3>
@@ -216,14 +187,7 @@
       </div>
 
       <div v-if="port.messages.length > 0" class="scroll-container">
-        <ul>
-          <li
-            v-for="message in port.messages"
-            :key="message.id + message.timestamp"
-          >
-            <strong>{{ message.id }}:</strong> {{ message.data }}
-          </li>
-        </ul>
+        <MessageStatus ref="messageStatus" :messages="port.messages" />
       </div>
     </div>
   </div>
@@ -246,17 +210,18 @@ export default {
   },
   data() {
     return {
-        serialPorts: [ //Simulated Serial conneciton
-            {
-                info: "Simulated Port 1",
-                buffer: "",
-                deviceName: "Virtual COM1",
-                consoleOutput: "Simulated console output...",
-                inputData: "",
-                messages: [],
-                showConsole: false,            }
+      serialPorts: [ //Simulated Serial conneciton
+        {
+          info: "Simulated Port 1",
+          buffer: "",
+          deviceName: "Virtual COM1",
+          consoleOutput: "Simulated console output...",
+          inputData: "",
+          messages: [],
+          showConsole: false,
+        }
       ], // List of connected serial ports
-      showMessageHelp: null,      
+      showMessageHelp: null,
       fileContent: "", // Content of the uploaded file
       canData: null, // Parsed CAN data from the uploaded file
       canMessages: [], // Array to store the CAN messages
@@ -287,11 +252,11 @@ export default {
         index: null,
       },
       showHelp: {
-      message: false,
-      repeat: false,
-      interval: false,
-      startTime: false
-    },
+        message: false,
+        repeat: false,
+        interval: false,
+        startTime: false
+      },
     };
   },
   async mounted() {
@@ -345,13 +310,13 @@ export default {
     },
 
     toggleConsole(port) {
-        if (!port.hasOwnProperty('showConsole')) {
-         this.$set(port, 'showConsole', false); // Ensure reactivity
-        }
-        port.showConsole = !port.showConsole;
-      },
+      if (!port.hasOwnProperty('showConsole')) {
+        this.$set(port, 'showConsole', false); // Ensure reactivity
+      }
+      port.showConsole = !port.showConsole;
+    },
 
-  
+
     handleBlur() {
       const multiselect = this.$refs.ignoredIDsMultiselect;
       if (multiselect) {
@@ -927,14 +892,13 @@ export default {
   margin: 0 auto;
 }
 
-.form-group{
+.form-group {
   display: flex;
   flex-direction: column;
   margin-bottom: 1rem;
 }
 
 .form-group label {
-  padding: 0.5rem;
   border: 1px solid #ccc;
   border-radius: 4px;
   width: 100%
@@ -948,6 +912,7 @@ export default {
   gap: 10px;
   margin-top: 10px;
 }
+
 .button-group button {
   padding: 8px 12px;
   font-size: 14px;
@@ -957,6 +922,7 @@ export default {
   cursor: pointer;
   transition: background 0.2s ease-in-out;
 }
+
 .button-group button:hover {
   background-color: #e0e0e0;
 }
@@ -986,10 +952,12 @@ export default {
   margin-right: 10px;
   animation: spin 1s linear infinite;
 }
+
 @keyframes spin {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
@@ -1011,9 +979,11 @@ export default {
   vertical-align: middle;
   transition: color 0.1s ease-in-out;
 }
+
 .help-icon:hover {
   color: #007bff;
 }
+
 .help-text {
   background: #fff9c4;
   padding: 8px 12px;
@@ -1041,6 +1011,7 @@ export default {
   margin-top: 20px;
   box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
 }
+
 .console-container {
   display: flex;
   flex-direction: column;
@@ -1055,6 +1026,7 @@ export default {
   text-align: left;
   margin-top: 10px;
 }
+
 .console-output {
   width: 100%;
   background-color: #121212;
@@ -1069,6 +1041,7 @@ export default {
   height: 200px;
   border: none;
 }
+
 .console-buttons {
   display: flex;
   justify-content: center;
@@ -1083,6 +1056,7 @@ export default {
   gap: 6px;
   margin-top: 8px;
 }
+
 .scroll-container {
   height: 300px;
   overflow-y: auto;
@@ -1091,28 +1065,27 @@ export default {
   background-color: #f9f9f9;
 }
 
-/* Modal Buttons and Configuration */
 .attack-config {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center; 
-  margin: 0 auto;
+  font-family: Arial, sans-serif;
+  margin: 20px;
 }
-.attack-config .form-group {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 400px;  /* limit how wide the fields get */
-  margin-bottom: 1rem;
-  border: none;
-}
+
 /* Remove borders from labels and center them */
 .attack-config .form-group label {
-  margin-bottom: 0.5rem;
   border: none;
   font-weight: bold;
   text-align: center;
+}
+
+.select-container,
+.replay-config .form-group {
+  margin-bottom: 15px;
+}
+
+label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: bold;
 }
 
 .configure-button {
@@ -1125,6 +1098,7 @@ export default {
   font-size: 1rem;
   border: none;
 }
+
 .configure-button:hover {
   background-color: #0056b3;
 }
@@ -1134,14 +1108,18 @@ textarea {
   width: 100%;
   margin-bottom: 10px;
 }
+
 input {
-  width: calc(100% - 100px);
-  margin-right: 10px;
-  padding: 5px;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
 }
+
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
