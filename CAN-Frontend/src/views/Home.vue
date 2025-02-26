@@ -210,17 +210,7 @@ export default {
   },
   data() {
     return {
-      serialPorts: [ //Simulated Serial conneciton
-        {
-          info: "Simulated Port 1",
-          buffer: "",
-          deviceName: "Virtual COM1",
-          consoleOutput: "Simulated console output...",
-          inputData: "",
-          messages: [],
-          showConsole: false,
-        }
-      ], // List of connected serial ports
+      serialPorts: [], // List of connected serial ports
       showMessageHelp: null,
       fileContent: "", // Content of the uploaded file
       canData: null, // Parsed CAN data from the uploaded file
