@@ -110,7 +110,7 @@ void handleUpload(const char *command)
 
   JsonObject obj = doc.as<JsonObject>();
   JsonArray ids = obj["ids"];
-  int mask = obj["mask"]; // Expecting mask as an integer
+  unsigned long mask = obj["mask"];
 
   numSelectedIds = ids.size();
 
@@ -143,9 +143,11 @@ void handleReplayAttack(const char *command)
 {
   char tempCommand[MAX_NAME_LENGTH + 1];
   strncpy(tempCommand, command, MAX_NAME_LENGTH);
+  tempCommand[MAX_NAME_LENGTH] = '\0';  // Ensure null termination
 
   char *commandPtr = tempCommand;
   const char *replayPrefix = "replay:";
+
   if (strncmp(commandPtr, replayPrefix, strlen(replayPrefix)) == 0)
   {
     commandPtr += strlen(replayPrefix);
@@ -156,35 +158,42 @@ void handleReplayAttack(const char *command)
     return;
   }
 
-  char *firstColon = strchr(commandPtr, ':');
+  // Find delimiters (`#` and `:`)
+  char *idSeparator = strchr(commandPtr, '#');  // # separates ID and DATA
+  if (!idSeparator) { Serial.println("Invalid replay format."); return; }
+  *idSeparator = '\0';  // Null-terminate ID
+
+  char *firstColon = strchr(idSeparator + 1, ':');
+  if (!firstColon) { Serial.println("Invalid replay format."); return; }
+  *firstColon = '\0';  // Null-terminate DATA
+
   char *secondColon = strchr(firstColon + 1, ':');
+  if (!secondColon) { Serial.println("Invalid replay format."); return; }
+  *secondColon = '\0';  // Null-terminate repeat
+
   char *thirdColon = strchr(secondColon + 1, ':');
+  if (!thirdColon) { Serial.println("Invalid replay format."); return; }
+  *thirdColon = '\0';  // Null-terminate interval
 
-  if (firstColon == NULL || secondColon == NULL || thirdColon == NULL)
-  {
-    Serial.println("Invalid replay command format.");
-    return;
-  }
+  char *fourthColon = strchr(thirdColon + 1, ':');
+  if (!fourthColon) { Serial.println("Invalid replay format."); return; }
+  *fourthColon = '\0';  // Null-terminate start time
 
-  *firstColon = '\0';
-  *secondColon = '\0';
-  *thirdColon = '\0';
+  // Convert replay ID (Hex)
+  replayId = strtoul(commandPtr, NULL, 16);
 
-  // Parse replayId as an unsigned long (hexadecimal)
-  replayId = strtoul(commandPtr, NULL, 16);  // Convert the replayId from hexadecimal string to unsigned long
-  
-  // Parse replayData
-  int messageLen = strlen(firstColon + 1) / 2; // Each byte is represented by 2 hex characters
+  // Parse replayData (Hex Bytes)
+  int messageLen = strlen(idSeparator + 1) / 2;  // Each byte = 2 hex chars
   for (int i = 0; i < messageLen && i < 8; i++)
   {
-    char byteStr[3] = {firstColon[i * 2 + 1], firstColon[i * 2 + 2], '\0'};
-    replayData[i] = strtol(byteStr, NULL, 16);  // Convert hex string to bytes and store it in replayData
+    char byteStr[3] = {idSeparator[1 + i * 2], idSeparator[2 + i * 2], '\0'};
+    replayData[i] = strtol(byteStr, NULL, 16);
   }
 
   // Parse other parameters
-  replayRepeat = atoi(secondColon + 1);
-  replayInterval = atoi(thirdColon + 1);
-  replayStartTime = atoi(thirdColon + 1 + strlen(thirdColon + 1));
+  replayRepeat = atoi(firstColon + 1);
+  replayInterval = atoi(secondColon + 1);
+  replayStartTime = atoi(thirdColon + 1);
   replayConfigured = true;
   replayTriggered = false;
 
@@ -328,11 +337,8 @@ void enqueueMessage(const char* message)
   // Check if message queue is full before enqueuing
   if (!messageQueue.isFull())
   {
-    // Create a fixed-size buffer and copy the message into it
-    char buffer[64];
-    strncpy(buffer, message, sizeof(buffer) - 1);
-    buffer[sizeof(buffer) - 1] = '\0';  // Ensure null-termination
-    messageQueue.enqueue(buffer);  // Enqueue the message buffer
+    char* copy = strdup(message); // Allocate memory and copy string
+    messageQueue.enqueue(copy);
   }
   else
   {
@@ -347,15 +353,19 @@ void processSerialQueue()
   {
     char* message = messageQueue.getHead();  // Retrieve the message from the queue
 
-    // Check if there's enough space in the serial buffer to send the message
-    if (Serial.availableForWrite() >= strlen(message))
+    if (message != nullptr)
     {
-      Serial.println(message);  // Print the message to serial
-      messageQueue.dequeue();  // Remove the message from the queue
-    }
-    else
-    {
-      break;  // Stop if there's not enough space in the serial buffer
+      // Check if there's enough space in the serial buffer to send the message
+      if (Serial.availableForWrite() >= strlen(message))
+      {
+        Serial.println(message);  // Print the message to serial
+        messageQueue.dequeue();  // Remove the message from the queue
+        free(message);
+      }
+      else
+      {
+        break;  // Stop if there's not enough space in the serial buffer
+      }
     }
   }
 }
@@ -396,9 +406,11 @@ void loop()
     int i = 0;
     while (Serial.available() > 0 && i < sizeof(command) - 1)
     {
-      command[i++] = Serial.read();
-      if (command[i - 1] == '\n')
+      char c = Serial.read();
+      if (c == '\n' || c == '\r')
         break;
+
+      command[i++] = c;
     }
     command[i] = '\0';  // Null-terminate the string
     handleCommand(command);
