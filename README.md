@@ -13,6 +13,7 @@ CANBench provides a low-cost, physical platform for researchers, educators, and 
 Getting started with CANBench is simple! Follow these steps to set up the testbed and begin your exploration of automotive network security. For detailed setup instructions and background information, visit the [CANBench Wiki](https://github.com/trevormcclellan/CAN-Testbed/wiki).  
 
 ## Quick Start Guide  
+If you are unfamiliar with the CAN bus, start by reading the [Background](https://github.com/trevormcclellan/CAN-Testbed/wiki/Background) section of the wiki.
 
 1. **Assemble the Hardware:**  
    Gather the required off-the-shelf components listed in the [Hardware Setup](https://github.com/trevormcclellan/CAN-Testbed/wiki/Hardware-Setup) section of the wiki. Follow the instructions to assemble the testbed.
