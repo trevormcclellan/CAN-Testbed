@@ -4,78 +4,102 @@
 #include <ArduinoJson.h>
 #include <ArduinoQueue.h>
 
+#define MAX_HW_FILTERS 6 // MCP2515 supports 6 filters
+#define LED_PIN 18
 #define SPI_CS_PIN 9
 MCP_CAN CAN(SPI_CS_PIN);
 
-int led = 18;
-String deviceName;
-const int MAX_HW_FILTERS = 6; // MCP2515 supports 6 filters
-int selectedIds[20];          // Example size for selected IDs (can hold up to 20)
-int numSelectedIds = 0;
-int ignoredIds[20]; // Example size for ignored IDs (can hold up to 20)
-int numIgnoredIds = 0;
+#define EEPROM_SIZE 128 // Emulated EEPROM Size
+#define MAX_NAME_LENGTH 99
+char deviceName[MAX_NAME_LENGTH + 1];
+
+unsigned long selectedIds[20]; // Example size for selected IDs (can hold up to 20)
+uint8_t numSelectedIds = 0;
+
+unsigned long ignoredIds[20]; // Example size for ignored IDs (can hold up to 20)
+uint8_t numIgnoredIds = 0;
 
 // Replay configuration
-String replayId;
-String replayData;
-int replayRepeat = 0;
-int replayInterval = 0;
-int replayStartTime = 0;
+unsigned long replayId;
+unsigned char replayData[8];
+uint16_t replayRepeat = 0;
+uint32_t replayInterval = 0;
+uint32_t replayStartTime = 0;
 bool replayConfigured = false;
 bool replayTriggered = false;
-unsigned long firstCanMessageTime = 0;
+uint32_t firstCanMessageTime = 0;
 
-// Queue to hold serial messages
-ArduinoQueue<String> messageQueue(1000);
+// Queue to hold outgoing serial messages
+ArduinoQueue<char*> messageQueue(1000);
 
 // Function to read device name from EEPROM
 void readDeviceName()
 {
-  char name[100];
+  char name[MAX_NAME_LENGTH + 1];
   int i = 0;
 
   while (true)
   {
     char c = EEPROM.read(i);
-    if (c == '\0' || i >= sizeof(name) - 1)
+    if (c == '\0' || i >= MAX_NAME_LENGTH)
       break;
     name[i] = c;
     i++;
   }
   name[i] = '\0';
 
-  deviceName = (i == 0 || name[0] == '\0') ? "Unknown" : String(name);
+  if (i == 0 || name[0] == '\0')
+  {
+    snprintf(deviceName, sizeof(deviceName), "Unknown");
+  }
+  else
+  {
+    strncpy(deviceName, name, MAX_NAME_LENGTH);
+  }
+
   Serial.print("Read device name from EEPROM: ");
   Serial.println(deviceName);
 }
 
 // Function to write device name to EEPROM
-void writeDeviceName(const String &name)
+void writeDeviceName(const char *name)
 {
   Serial.print("Writing device name to EEPROM: ");
   Serial.println(name);
 
-  for (int i = 0; i < 100; i++)
+  for (int i = 0; i < MAX_NAME_LENGTH; i++)
   {
     EEPROM.write(i, 0);
   }
 
-  for (int i = 0; i < name.length() && i < 99; i++)
+  for (int i = 0; i < strlen(name) && i < MAX_NAME_LENGTH; i++)
   {
     EEPROM.write(i, name[i]);
   }
-  EEPROM.write(name.length(), '\0');
+  EEPROM.write(strlen(name), '\0');
   EEPROM.commit();
 }
 
 // Function to process the upload command with JSON data
-void handleUpload(String command)
+void handleUpload(const char *command)
 {
-  command.replace("upload:", "");
-  command.replace(":end", "");
+  char tempCommand[MAX_NAME_LENGTH + 1];
+  strncpy(tempCommand, command, MAX_NAME_LENGTH);
+
+  char *commandPtr = tempCommand;
+  const char *uploadPrefix = "upload:";
+  if (strncmp(commandPtr, uploadPrefix, strlen(uploadPrefix)) == 0)
+  {
+    commandPtr += strlen(uploadPrefix);
+  }
+  else
+  {
+    Serial.println("Invalid upload command format.");
+    return;
+  }
 
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, command);
+  DeserializationError error = deserializeJson(doc, commandPtr);
 
   if (error)
   {
@@ -115,57 +139,81 @@ void handleUpload(String command)
   }
 }
 
-void handleReplayAttack(String command)
+void handleReplayAttack(const char *command)
 {
-  command.replace("replay:", "");
-  command.replace(":endreplay", "");
+  char tempCommand[MAX_NAME_LENGTH + 1];
+  strncpy(tempCommand, command, MAX_NAME_LENGTH);
 
-  int firstColon = command.indexOf(':');
-  int secondColon = command.indexOf(':', firstColon + 1);
-  int thirdColon = command.indexOf(':', secondColon + 1);
-
-  if (firstColon == -1 || secondColon == -1 || thirdColon == -1)
+  char *commandPtr = tempCommand;
+  const char *replayPrefix = "replay:";
+  if (strncmp(commandPtr, replayPrefix, strlen(replayPrefix)) == 0)
+  {
+    commandPtr += strlen(replayPrefix);
+  }
+  else
   {
     Serial.println("Invalid replay command format.");
     return;
   }
 
-  String message = command.substring(0, firstColon);
-  replayId = message.substring(0, message.indexOf('#'));
-  replayData = message.substring(message.indexOf('#') + 1);
-  replayRepeat = command.substring(firstColon + 1, secondColon).toInt();
-  replayInterval = command.substring(secondColon + 1, thirdColon).toInt();
-  replayStartTime = command.substring(thirdColon + 1, command.length()).toInt();
+  char *firstColon = strchr(commandPtr, ':');
+  char *secondColon = strchr(firstColon + 1, ':');
+  char *thirdColon = strchr(secondColon + 1, ':');
+
+  if (firstColon == NULL || secondColon == NULL || thirdColon == NULL)
+  {
+    Serial.println("Invalid replay command format.");
+    return;
+  }
+
+  *firstColon = '\0';
+  *secondColon = '\0';
+  *thirdColon = '\0';
+
+  // Parse replayId as an unsigned long (hexadecimal)
+  replayId = strtoul(commandPtr, NULL, 16);  // Convert the replayId from hexadecimal string to unsigned long
+  
+  // Parse replayData
+  int messageLen = strlen(firstColon + 1) / 2; // Each byte is represented by 2 hex characters
+  for (int i = 0; i < messageLen && i < 8; i++)
+  {
+    char byteStr[3] = {firstColon[i * 2 + 1], firstColon[i * 2 + 2], '\0'};
+    replayData[i] = strtol(byteStr, NULL, 16);  // Convert hex string to bytes and store it in replayData
+  }
+
+  // Parse other parameters
+  replayRepeat = atoi(secondColon + 1);
+  replayInterval = atoi(thirdColon + 1);
+  replayStartTime = atoi(thirdColon + 1 + strlen(thirdColon + 1));
   replayConfigured = true;
   replayTriggered = false;
 
+  // Debugging output
   Serial.println("Replay configuration set:");
-  Serial.println("ID: " + replayId);
-  Serial.println("Data: " + replayData);
-  Serial.println("Repeat: " + String(replayRepeat));
-  Serial.println("Interval: " + String(replayInterval) + " ms");
-  Serial.println("Start Time: " + String(replayStartTime) + " ms");
+  Serial.print("ID: ");
+  Serial.println(replayId, HEX);  // Print replayId as hexadecimal
+  Serial.print("Data: ");
+  for (int i = 0; i < messageLen; i++)  // Print each byte of replayData
+  {
+    Serial.print(replayData[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+  Serial.print("Repeat: ");
+  Serial.println(replayRepeat);
+  Serial.print("Interval: ");
+  Serial.println(replayInterval);
+  Serial.print("Start Time: ");
+  Serial.println(replayStartTime);
 }
 
 void executeReplay()
 {
   Serial.println("Starting replay...");
-  unsigned char buf[8];
-  int messageLen = replayData.length() / 2; // Each byte is two hex chars
-
-  // Parse the replay data into the buffer
-  for (int i = 0; i < messageLen && i < 8; i++)
-  {
-    String byteStr = replayData.substring(i * 2, i * 2 + 2);
-    buf[i] = strtol(byteStr.c_str(), NULL, 16);
-  }
-
-  unsigned long replayIdValue = strtol(replayId.c_str(), NULL, 16);
 
   for (int i = 0; i < replayRepeat; i++)
   {
-    // Send CAN message
-    if (CAN.sendMsgBuf(replayIdValue, 0, messageLen, buf) == CAN_OK)
+    if (CAN.sendMsgBuf(replayId, 0, 8, replayData) == CAN_OK)
     {
       Serial.println("Replay message sent.");
     }
@@ -176,6 +224,7 @@ void executeReplay()
 
     delay(replayInterval);
   }
+
   Serial.println("Replay complete.");
 }
 
@@ -201,54 +250,46 @@ void setupHardwareFilters(unsigned long mask)
   }
 }
 
-void handleCommand(String command)
+void handleCommand(const char *command)
 {
-  command.trim();
-
-  if (command.equalsIgnoreCase("identify"))
+  if (strcmp(command, "identify") == 0)
   {
     for (int i = 0; i < 6; i++)
     {
-      digitalWrite(led, HIGH);
+      digitalWrite(LED_PIN, HIGH);
       delay(250);
-      digitalWrite(led, LOW);
+      digitalWrite(LED_PIN, LOW);
       delay(250);
     }
   }
-  else if (command.startsWith("set_name"))
+  else if (strncmp(command, "set_name", 8) == 0)
   {
-    int index = command.indexOf(' ');
-    if (index > 0)
-    {
-      String newName = command.substring(index + 1);
-      writeDeviceName(newName);
-      deviceName = newName;
-      Serial.println("Name set to: " + deviceName);
-    }
-    else
-    {
-      Serial.println("Invalid set_name command");
-    }
+    const char *newName = command + 9; // Skip 'set_name '
+    writeDeviceName(newName);
+    strncpy(deviceName, newName, MAX_NAME_LENGTH);
+    Serial.print("Name set to: ");
+    Serial.println(deviceName);
   }
-  else if (command.equalsIgnoreCase("get_name"))
+  else if (strcmp(command, "get_name") == 0)
   {
-    Serial.println("Device name: " + deviceName);
+    Serial.print("Device name: ");
+    Serial.println(deviceName);
   }
-  else if (command.startsWith("upload:"))
+  else if (strncmp(command, "upload:", 7) == 0)
   {
     handleUpload(command);
   }
-  else if (command.startsWith("replay:"))
+  else if (strncmp(command, "replay:", 7) == 0)
   {
     handleReplayAttack(command);
   }
-  else if (command.startsWith("ignore:"))
+  else if (strncmp(command, "ignore:", 7) == 0)
   {
-    command.replace("ignore:", "");
-    command.replace(":end", "");
+    char tempCommand[MAX_NAME_LENGTH + 1];
+    strncpy(tempCommand, command, MAX_NAME_LENGTH);
 
     JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, command);
+    DeserializationError error = deserializeJson(doc, tempCommand + 7);
 
     if (error)
     {
@@ -266,15 +307,10 @@ void handleCommand(String command)
       const char *hexIdStr = arr[i].as<const char *>();
       ignoredIds[i] = strtol(hexIdStr, NULL, 16); // Convert hex string to integer
     }
-    Serial.println("Uploaded and set ignored CAN IDs:");
-    for (int i = 0; i < numIgnoredIds; i++)
-    {
-      Serial.println(ignoredIds[i], HEX);
-    }
   }
   else
   {
-    Serial.println("Unknown command: " + command);
+    Serial.println("Unknown command.");
   }
 }
 
@@ -287,15 +323,20 @@ void transformData(unsigned char *transformedData, unsigned char *data, int data
   }
 }
 
-void enqueueMessage(const String &message)
+void enqueueMessage(const char* message)
 {
+  // Check if message queue is full before enqueuing
   if (!messageQueue.isFull())
   {
-    messageQueue.enqueue(message);
+    // Create a fixed-size buffer and copy the message into it
+    char buffer[64];
+    strncpy(buffer, message, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';  // Ensure null-termination
+    messageQueue.enqueue(buffer);  // Enqueue the message buffer
   }
   else
   {
-    digitalWrite(led, HIGH);
+    digitalWrite(LED_PIN, HIGH);  // Turn on LED if queue is full
   }
 }
 
@@ -304,24 +345,27 @@ void processSerialQueue()
   // Non-blocking serial output
   while (!messageQueue.isEmpty())
   {
-    String message = messageQueue.getHead();
-    if (Serial.availableForWrite() >= message.length())
+    char* message = messageQueue.getHead();  // Retrieve the message from the queue
+
+    // Check if there's enough space in the serial buffer to send the message
+    if (Serial.availableForWrite() >= strlen(message))
     {
-      Serial.println(message);
-      messageQueue.dequeue();
+      Serial.println(message);  // Print the message to serial
+      messageQueue.dequeue();  // Remove the message from the queue
     }
     else
     {
-      break;
+      break;  // Stop if there's not enough space in the serial buffer
     }
   }
 }
 
+
 void setup()
 {
   Serial.begin(115200);
-  pinMode(led, OUTPUT);
-  EEPROM.begin(512);
+  pinMode(LED_PIN, OUTPUT);
+  EEPROM.begin(EEPROM_SIZE);
   readDeviceName();
 
   if (CAN.begin(CAN_500KBPS) != CAN_OK)
@@ -337,9 +381,9 @@ void setup()
 
   for (int i = 0; i < 6; i++)
   {
-    digitalWrite(led, HIGH);
+    digitalWrite(LED_PIN, HIGH);
     delay(250);
-    digitalWrite(led, LOW);
+    digitalWrite(LED_PIN, LOW);
     delay(250);
   }
 }
@@ -348,7 +392,15 @@ void loop()
 {
   if (Serial.available() > 0)
   {
-    String command = Serial.readStringUntil('\n');
+    char command[256];
+    int i = 0;
+    while (Serial.available() > 0 && i < sizeof(command) - 1)
+    {
+      command[i++] = Serial.read();
+      if (command[i - 1] == '\n')
+        break;
+    }
+    command[i] = '\0';  // Null-terminate the string
     handleCommand(command);
   }
 
@@ -390,23 +442,29 @@ void loop()
     unsigned long recvTime = millis();
 
     // If using hardware filters or ID matches, process the message
-    String msg = String(canId, HEX);
-    while (msg.length() < 3)
-    {
-      msg = "0" + msg;
-    }
-    msg += "#";
+    char msg[64];
+    snprintf(msg, sizeof(msg), "%03lX#", canId);
 
     for (int i = 0; i < len; i++)
     {
-      if (transformedData[i] < 0x10)
-        msg += "0";
-      msg += String(transformedData[i], HEX);
+      char hexBuf[3];  // Buffer to store the hex string for a byte
+      snprintf(hexBuf, sizeof(hexBuf), "%02X", transformedData[i]);
+      strncat(msg, hexBuf, sizeof(msg) - strlen(msg) - 1);
     }
-    msg += "#" + String(recvTime);
-    msg.toUpperCase();
-    msg = "recv:" + msg + ":endrecv";
-    enqueueMessage(msg);
+
+    // Append the receive time
+    snprintf(msg + strlen(msg), sizeof(msg) - strlen(msg), "#%lu", recvTime);
+
+    // Convert to uppercase
+    for (int i = 0; msg[i] != '\0'; i++)
+    {
+      msg[i] = toupper(msg[i]);
+    }
+
+    // Enqueue message
+    char finalMsg[64];  // Final buffer for "recv:" and ":endrecv"
+    snprintf(finalMsg, sizeof(finalMsg), "recv:%s:endrecv", msg);
+    enqueueMessage(finalMsg);
 
     // Handle replay logic
     if (replayConfigured && !replayTriggered)
@@ -422,5 +480,6 @@ void loop()
       executeReplay();
     }
   }
+  
   processSerialQueue();
 }
