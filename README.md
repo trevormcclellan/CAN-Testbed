@@ -26,7 +26,7 @@ Getting started with CANBench is simple! Follow these steps to set up the testbe
    ```
 
 3. **Run the Testbed:**
-    Launch the testbed application and begin simulating attacks or analyzing CAN traffic. Detailed instructions for running the software can be found in the [Running the Testbed](https://github.com/trevormcclellan/CAN-Testbed/wiki/Running-the-Testbed) section.
+    Launch the testbed application and begin simulating attacks or analyzing CAN traffic. Detailed instructions for running the software can be found in the [Using the Testbed](https://github.com/trevormcclellan/CAN-Testbed/wiki/Using-the-Testbed) section.
 
 4. **Start Experimenting:**
     Explore the capabilities of CANBench by simulating attacks, implementing mitigations, or using it as a teaching tool. Check out example use cases and tutorials in the wiki to get inspired.

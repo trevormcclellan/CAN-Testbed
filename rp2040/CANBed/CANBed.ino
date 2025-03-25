@@ -316,7 +316,7 @@ void handleCommand(const char *command)
 
 void transformData(unsigned char *transformedData, unsigned char *data, int dataLength)
 {
-  // Add code here to transform the data before sending
+  // Add code here to transform the data before processing
   for (int i = 0; i < dataLength; i++)
   {
     transformedData[i] = data[i];
