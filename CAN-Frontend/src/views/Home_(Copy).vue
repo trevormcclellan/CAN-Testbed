@@ -83,7 +83,7 @@
             </div>
 
 
-          <button type="submit" @click="configureReplay">
+          <button type="submit" class="configure-button" @click="configureReplay">
             Configure
           </button>
         </div>
@@ -104,8 +104,8 @@
 
           <!-- space for user to add name of CAN ID set-->
           <input v-model="arrayName" placeholder="Enter a name for this set of ID's" />
-          <button  @click="saveIgnoredIDs">Save Set</button>
-          <button  @click="uploadIgnoredIDs">Upload</button>
+          <button @click="saveIgnoredIDs">Save Set</button>
+          <button @click="uploadIgnoredIDs">Upload</button>
         </div>
 
         <div v-else-if="modalType == 'maskConfig'">
@@ -127,11 +127,9 @@
 
     <!-- File Upload & Global Actions -->
     <h1>Upload CANdump File</h1>
-    <div class="file-upload-container">
-      <form>
-        <input @change="uploadFile" type="file" />
-      </form>
-    </div>
+    <form>
+      <input @change="uploadFile" type="file" />
+    </form>
 
     <div class="button-group">
       <button @click="ignoreIDs">Ignore IDs</button>
@@ -165,7 +163,7 @@
 
           <input v-model="port.inputData" type="text" placeholder="Type a message..." />
 
-          <div class="button-group">
+          <div class="console-buttons">
             <button @click="sendData(port, index)">Send</button>
             <button @click="closePort(port)">Close Port</button>
           </div>
@@ -1062,8 +1060,6 @@ export default {
   margin-top: 10px;
 }
 
-
-
 .console-output {
   width: 100%;
   background-color: #121212;
@@ -1079,6 +1075,13 @@ export default {
   border: none;
 }
 
+.console-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 20px
+}
+
 /* Messages List */
 .messages-header {
   display: flex;
@@ -1087,20 +1090,6 @@ export default {
   gap: 6px;
   margin-top: 8px;
 }
-
-.file-upload-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 20px 0; /* Adjust vertical spacing as needed */
-}
-
-.file-upload-container input[type="file"] {
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-
 
 .grid-container {
   display: grid;
@@ -1139,6 +1128,38 @@ label {
   display: block;
   margin-bottom: 5px;
   font-weight: bold;
+}
+
+.configure-button {
+  display: inline-block;
+  background-color: #007bff;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  border: none;
+}
+
+.button {
+  padding: 8px 12px;
+  font-size: 14px;
+  border-radius: 5px;
+  background-color: #f8f9fa;
+  border: 1px solid #ccc;
+  cursor: pointer;
+  transition: background 0.2s ease-in-out;
+  color: #333;
+  text-decoration: none;
+}
+
+.button:hover {
+  background-color: #e0e0e0;
+}
+
+
+.configure-button:hover {
+  background-color: #0056b3;
 }
 
 /* Form Inputs */
