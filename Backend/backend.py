@@ -107,7 +107,7 @@ def start_simulation():
                 except can.CanError as e:
                     print(f"Failed to send message: {e}")
 
-            print("Simulation completed successfully")
+            time.sleep(1)  # Sleep for 1 second before stopping the simulation
             socketio.emit('simulation_complete', {'status': 'Simulation completed successfully'})
 
         except Exception as e:

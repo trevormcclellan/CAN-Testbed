@@ -6,9 +6,8 @@
       <p>Loading...</p>
     </div>
 
-    <!-- Show error, but truncate "No file selected" to "No fi...ted" -->
     <div v-if="error">
-      <p v-if="error === 'No file selected'">No fi...ted</p>
+      <p v-if="error === 'No file selected'">No file selected</p>
       <p v-else>{{ error }}</p>
     </div>
 
@@ -39,10 +38,10 @@
             </label>
             <input id="repeat" type="number" min="1" placeholder="Enter the number of times"
               v-model.number="replayConfig.repeat" />
-            </div>
-            <div v-if="showHelp.repeat" class="help-text">
-              <p>Defines how many times the message should be sent. Minimum is 1.</p>
-            </div>
+          </div>
+          <div v-if="showHelp.repeat" class="help-text">
+            <p>Defines how many times the message should be sent. Minimum is 1.</p>
+          </div>
 
           <div class="form-group">
             <label for="interval">
@@ -53,10 +52,10 @@
             </label>
             <input id="interval" type="number" min="0" placeholder="Enter the interval"
               v-model.number="replayConfig.interval" />
-            </div>
-            <div v-if="showHelp.interval" class="help-text">
-              <p>Time delay (in milliseconds) between repeated messages.</p>
-            </div>
+          </div>
+          <div v-if="showHelp.interval" class="help-text">
+            <p>Time delay (in milliseconds) between repeated messages.</p>
+          </div>
 
           <div class="form-group">
             <label for="startTime">
@@ -67,10 +66,10 @@
             </label>
             <input id="startTime" type="number" min="0" placeholder="Enter the start time"
               v-model.number="replayConfig.startTime" />
-            </div>
-            <div v-if="showHelp.startTime" class="help-text">
-              <p>Delay before the first message is sent (in milliseconds).</p>
-            </div>
+          </div>
+          <div v-if="showHelp.startTime" class="help-text">
+            <p>Delay before the first message is sent (in milliseconds).</p>
+          </div>
 
           <button type="submit" class="configure-button" @click="configureReplay">
             Configure
@@ -126,6 +125,14 @@
       <button @click="beginSimulation">
         {{ simulationStartTime ? 'Restart' : 'Start' }} Simulation
       </button>
+    </div>
+
+    <div class="toggle-container">
+      <label class="switch">
+        <input type="checkbox" v-model="showMessageStatus" />
+        <span class="slider round"></span>
+      </label>
+      <span>Show Message Status</span>
     </div>
 
     <h1>Serial Consoles</h1>
@@ -186,8 +193,11 @@
         </p>
       </div>
 
-      <div v-if="port.messages.length > 0" class="scroll-container">
+      <div v-if="port.messages.length > 0 && showMessageStatus" class="scroll-container">
         <MessageStatus ref="messageStatus" :messages="port.messages" />
+      </div>
+      <div v-else-if="port.buffer.length > 0 && !showMessageStatus && !simulationRunning && simulationStartTime" class="scroll-container">
+        <RawMessageList :buffer="port.buffer.split('\n')" :simulationOffset="simulationStartTime - port.syncSendTime" :millisAtSync="port.millisAtSync" />
       </div>
     </div>
   </div>
@@ -196,6 +206,7 @@
 <script>
 import Multiselect from '@vueform/multiselect';
 import MessageStatus from '@/components/MessageStatus.vue';
+import RawMessageList from '@/components/RawMessageList.vue';
 import Modal from '@/components/Modal.vue';
 import '@vueform/multiselect/themes/default.css';
 import axios from 'axios';
@@ -206,6 +217,7 @@ export default {
   components: {
     Multiselect,
     MessageStatus,
+    RawMessageList,
     Modal,
   },
   data() {
@@ -247,6 +259,7 @@ export default {
         interval: false,
         startTime: false
       },
+      showMessageStatus: true,
     };
   },
   async mounted() {
@@ -260,7 +273,9 @@ export default {
       console.log('Simulation complete.');
       this.simulationRunning = false;
       this.loading = true;
-      await this.processReceivedMessages();
+      if (this.showMessageStatus) {
+        await this.processReceivedMessages();
+      }
       this.loading = false;
     });
   },
@@ -340,6 +355,9 @@ export default {
           messageMap: null,
           worker: null,
           mask: '0x7FF',
+          syncSendTime: null,
+          syncReceiveTime: null,
+          millisAtSync: null
         };
         this.serialPorts.push(serialPortData);
 
@@ -535,7 +553,13 @@ export default {
         return;
       }
 
-      if (this.simulationRunning) {
+      else if (value.includes("sync:")) {
+        portData.writeToBuffer = true;
+        const receiveTime = Date.now();
+        portData.syncReceiveTime = receiveTime;
+      }
+
+      if (this.simulationRunning || portData.writeToBuffer) {
         portData.buffer += value;
       }
       else {
@@ -574,6 +598,8 @@ export default {
 
                 const messageContent = `${id}#${data}`;
                 const timestamp = parseInt(timestampStr, 10);
+                const simulationOffset = portData.simulationStartTime - portData.syncSendTime;
+                const adjustedTimestamp = (timestamp - portData.millisAtSync) + simulationOffset;
 
                 // Get the indices of the message content in the message map (for faster lookup)
                 let messageIndices = messageMap.get(messageContent) || [];
@@ -581,12 +607,12 @@ export default {
 
                 // If the message content is not found, add it as an unexpected message
                 if (nextMessageIndex === undefined) {
-                  messages.push({ text: messageContent, status: "unexpected", timestamp });
+                  messages.push({ text: messageContent, status: "unexpected", timestamp: adjustedTimestamp });
                 }
                 // If the message content is found, update the status and timestamp
                 else {
                   messages[nextMessageIndex].status = "received";
-                  messages[nextMessageIndex].timestamp = timestamp;
+                  messages[nextMessageIndex].timestamp = adjustedTimestamp;
 
                   // Update the message map with the remaining indices
                   if (messageIndices.length > 0) {
@@ -599,23 +625,32 @@ export default {
                 }
 
               } else {
-                consoleOutput += `${message}\n`;
+                consoleOutput += `Unknown message format: ${message}\n`;
               }
             }
-            portData.buffer = '';
             return { messages: messages, consoleOutput: consoleOutput };
           });
           portData.worker = workerFn;
           portData.terminateWorker = terminate;
-          const messagesJson = JSON.stringify(portData.messages);
+          const messagesJson = this.showMessageStatus ? JSON.stringify(portData.messages) : "[]";
           const messageMapJson = JSON.stringify(portData.messageMap ? Array.from(portData.messageMap) : null);
-          const result = await portData.worker({ buffer: portData.buffer, messages: messagesJson, messageMap: messageMapJson });
+          const result = await portData.worker(
+            {
+              buffer: portData.buffer,
+              messages: messagesJson,
+              messageMap: messageMapJson,
+              syncSendTime: portData.syncSendTime,
+              millisAtSync: portData.millisAtSync,
+              simulationStartTime: this.simulationStartTime,
+              showMessageStatus: this.showMessageStatus
+            });
           return result;
         })
       );
       this.serialPorts.forEach((portData, index) => {
         portData.messages = results[index].messages;
         portData.consoleOutput += results[index].consoleOutput;
+        portData.buffer = "";
       });
       console.log('Received messages processed.');
     },
@@ -834,17 +869,55 @@ export default {
       }
     },
 
-    // Begin the simulation by sending the CAN messages to the "Sender" port
+    async syncPortTime(portData) {
+      try {
+        const writer = portData.port.writable.getWriter();
+        const data = new TextEncoder().encode("sync\n");
+        const sendTime = Date.now();
+        portData.syncSendTime = sendTime;
+        await writer.write(data);
+        console.log('Sent "sync" command to port');
+        writer.releaseLock();
+        // Loop until the buffer contains a line that starts with 'sync:' and ends with ':endsync'
+        while (!portData.buffer.match(/^sync:.*:endsync$/m)) {
+          if (Date.now() - sendTime > 5000) { // 5-second timeout
+            console.error('Timeout: No sync message with :endsync received from port');
+            return;  // Exit the function to prevent infinite loop
+          }
+          await new Promise(resolve => setTimeout(resolve, 10)); // Wait 10ms before checking again
+        }
+
+        // Extract the sync message
+        const syncMessage = portData.buffer.match(/^sync:.*:endsync$/m);
+
+        portData.writeToBuffer = false;
+        portData.buffer = ""; // Clear the buffer after receiving the sync message
+
+        const receiveTime = portData.syncReceiveTime;
+        const roundTripTime = receiveTime - sendTime;
+        const boardMillis = parseInt(syncMessage[0].split(':')[1]) - roundTripTime / 2;
+        portData.millisAtSync = boardMillis;
+      } catch (error) {
+        console.error('Failed to send "sync" command:', error);
+      }
+    },
+
     async beginSimulation() {
-      if (this.simulationStartTime) {
-        // Reset messages to unreceived state and delete unexpected messages
-        this.serialPorts.forEach((port) => {
-          port.messages = port.messages.filter((message) => message.status !== "unexpected");
-          port.messages.forEach((message) => {
+      for (const portData of this.serialPorts) {
+        if (this.simulationStartTime) {
+          // Reset messages to unreceived state and delete unexpected messages
+          portData.messages = portData.messages.filter((message) => message.status !== "unexpected");
+          portData.messages.forEach((message) => {
             message.status = "unreceived";
             message.timestamp = null;
           });
-        });
+
+          portData.syncSendTime = null;
+          portData.syncReceiveTime = null;
+          portData.millisAtSync = null;
+        }
+
+        await this.syncPortTime(portData);
       }
 
       try {
@@ -855,6 +928,7 @@ export default {
 
         this.simulationRunning = true;
         const response = await axios.post('http://localhost:5000/start_simulation', payload);
+        this.simulationStartTime = Date.now();
         this.simulationStatus = response.data.message;
         console.log('Simulation started successfully:', response.data);
       } catch (error) {
@@ -862,8 +936,6 @@ export default {
         this.simulationStatus = error.response?.data?.message || 'Failed to start simulation.';
         this.simulationRunning = false;
       }
-
-      this.simulationStartTime = Date.now();
     },
   },
 };
@@ -1114,5 +1186,58 @@ input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
+}
+
+/* Toggle Switch */
+.toggle-container {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 20px;
+  margin-right: 10px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: 0.4s;
+  border-radius: 20px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.4s;
+  border-radius: 50%;
+}
+
+input:checked+.slider {
+  background-color: hsla(160, 100%, 37%, 1);
+}
+
+input:checked+.slider:before {
+  transform: translateX(14px);
 }
 </style>
