@@ -17,58 +17,67 @@
         <div v-if="modalType === 'attackConfig'" class="attack-config">
           <h3>Message Injection Configuration</h3>
           <div class="form-group">
-            <label for="message">
-              Message (ID#DATA):
-              <span class="help-icon" @mouseenter="showHelp.message = true" @mouseleave="showHelp.message = false">
-                (?)
-              </span>
-            </label>
-            <input id="message" type="text" placeholder="Enter the message" v-model="replayConfig.message" />
-          </div>
-          <div v-if="showHelp.message" class="help-text">
-            <p>Enter the CAN message in the format: ID#DATA (e.g., 0x123#112233).</p>
-          </div>
-
-          <div class="form-group">
-            <label for="repeat">
-              Repeat:
-              <span class="help-icon" @mouseenter="showHelp.repeat = true" @mouseleave="showHelp.repeat = false">
-                (?)
-              </span>
-            </label>
-            <input id="repeat" type="number" min="1" placeholder="Enter the number of times"
-              v-model.number="replayConfig.repeat" />
-          </div>
-          <div v-if="showHelp.repeat" class="help-text">
-            <p>Defines how many times the message should be sent. Minimum is 1.</p>
+            <div class="input-container">
+              <label for="message">
+                Message (ID#DATA):
+                <span class="help-icon" @mouseenter="showHelp.message = true" @mouseleave="showHelp.message = false">
+                  (?)
+                </span>
+              </label>
+              <input id="message" type="text" placeholder="Enter the message" v-model="replayConfig.message" />
+              <div v-if="showHelp.message" class="help-text">
+                <p>Enter the CAN message in the format: ID#DATA (e.g., 0x123#112233).</p>
+              </div>
+            </div>
           </div>
 
           <div class="form-group">
-            <label for="interval">
-              Interval (ms):
-              <span class="help-icon" @mouseenter="showHelp.interval = true" @mouseleave="showHelp.interval = false">
-                (?)
-              </span>
-            </label>
-            <input id="interval" type="number" min="0" placeholder="Enter the interval"
-              v-model.number="replayConfig.interval" />
-          </div>
-          <div v-if="showHelp.interval" class="help-text">
-            <p>Time delay (in milliseconds) between repeated messages.</p>
+            <div class="input-container">
+              <label for="repeat">
+                Repeat:
+                <span class="help-icon" @mouseenter="showHelp.repeat = true" @mouseleave="showHelp.repeat = false">
+                  (?)
+                </span>
+              </label>
+              <input id="repeat" type="number" min="1" placeholder="Enter the number of times"
+                v-model.number="replayConfig.repeat" />
+              <div v-if="showHelp.repeat" class="help-text">
+                <p>Defines how many times the message should be sent. Minimum is 1.</p>
+              </div>
+            </div>
           </div>
 
           <div class="form-group">
-            <label for="startTime">
-              Start Time (ms):
-              <span class="help-icon" @mouseenter="showHelp.startTime = true" @mouseleave="showHelp.startTime = false">
-                (?)
-              </span>
-            </label>
-            <input id="startTime" type="number" min="0" placeholder="Enter the start time"
-              v-model.number="replayConfig.startTime" />
+            <div class="input-container">
+              <label for="interval">
+                Interval (ms):
+                <span class="help-icon" @mouseenter="showHelp.interval = true" @mouseleave="showHelp.interval = false">
+                  (?)
+                </span>
+              </label>
+              <input id="interval" type="number" min="0" placeholder="Enter the interval"
+                v-model.number="replayConfig.interval" />
+              <div v-if="showHelp.interval" class="help-text">
+                <p>Time delay (in milliseconds) between repeated messages.</p>
+              </div>
+            </div>
           </div>
-          <div v-if="showHelp.startTime" class="help-text">
-            <p>Delay before the first message is sent (in milliseconds).</p>
+
+          <div class="form-group">
+            <div class="input-container">
+              <label for="startTime">
+                Start Time (ms):
+                <span class="help-icon" @mouseenter="showHelp.startTime = true"
+                  @mouseleave="showHelp.startTime = false">
+                  (?)
+                </span>
+              </label>
+              <input id="startTime" type="number" min="0" placeholder="Enter the start time"
+                v-model.number="replayConfig.startTime" />
+              <div v-if="showHelp.startTime" class="help-text">
+                <p>Delay before the first message is sent (in milliseconds).</p>
+              </div>
+            </div>
           </div>
 
           <button type="submit" class="configure-button" @click="configureReplay">
@@ -115,9 +124,11 @@
 
     <!-- File Upload & Global Actions -->
     <h1>Upload CANdump File</h1>
-    <form>
-      <input @change="uploadFile" type="file" />
-    </form>
+    <div class="file-upload-container">
+      <form>
+        <input @change="uploadFile" type="file" />
+      </form>
+    </div>
 
     <div class="button-group">
       <button @click="ignoreIDs">Ignore IDs</button>
@@ -140,39 +151,40 @@
       <p>No serial ports connected.</p>
     </div>
 
-    <div v-for="(port, index) in serialPorts" :key="port.info" class="console-section">
-      <h2>
-        Console {{ index + 1 }} - {{ port.deviceName || 'Unknown Device' }}
-      </h2>
+    <div class="grid-container">
+      <div v-for="(port, index) in serialPorts" :key="port.info" class="console-section">
+        <h2>
+          Console {{ index + 1 }} - {{ port.deviceName || 'Unknown Device' }}
+        </h2>
 
-      <div class="button-group">
-        <button @click="sendIdentify(port)">Identify</button>
-        <button @click="toggleConsole(port)">
-          {{ port.showConsole ? 'Hide Console' : 'Show Console' }}
-        </button>
-      </div>
-
-      <!-- (2) Hide console output when showConsole is false -->
-      <div v-if="port.showConsole" class="console-container">
-        <textarea class="console-output" v-model="port.consoleOutput" readonly></textarea>
-
-        <input v-model="port.inputData" type="text" placeholder="Type a message..." />
-
-        <div class="console-buttons">
-          <button @click="sendData(port, index)">Send</button>
-          <button @click="closePort(port)">Close Port</button>
+        <div class="button-group">
+          <button @click="sendIdentify(port)">Identify</button>
+          <button @click="toggleConsole(port)">
+            {{ port.showConsole ? 'Hide Console' : 'Show Console' }}
+          </button>
         </div>
-      </div>
 
-      <!-- CAN ID Selection -->
-      <div>
-        <label for="selectIds">Select up to 6 IDs:</label>
-        <Multiselect @select="handleSelect" @deselect="handleDeselect" v-model="selectedIds[index]" mode="tags"
-          :searchable="true" :options="uniqueIds" placeholder="Select CAN IDs" label="ID" track-by="ID"
-          :show-labels="false" :max="6" />
-      </div>
+        <!-- (2) Hide console output when showConsole is false -->
+        <div v-if="port.showConsole" class="console-container">
+          <textarea class="console-output" v-model="port.consoleOutput" readonly></textarea>
 
-      <div class="button-group">
+          <input v-model="port.inputData" type="text" placeholder="Type a message..." />
+
+          <div class="button-group">
+            <button @click="sendData(port, index)">Send</button>
+            <button @click="closePort(port)">Close Port</button>
+          </div>
+        </div>
+
+        <!-- CAN ID Selection -->
+        <div>
+          <label for="selectIds">Select up to 6 IDs:</label>
+          <Multiselect @select="handleSelect" @deselect="handleDeselect" v-model="selectedIds[index]" mode="tags"
+            :searchable="true" :options="uniqueIds" placeholder="Select CAN IDs" label="ID" track-by="ID"
+            :show-labels="false" :max="6" />
+        </div>
+
+        <div class="button-group">
         <button @click="configureMask(port, index)">Configure Mask</button>
         <button @click="configureAttack(port)">Configure Injection</button>
       </div>
@@ -193,11 +205,14 @@
         </p>
       </div>
 
-      <div v-if="port.messages.length > 0 && showMessageStatus" class="scroll-container">
-        <MessageStatus ref="messageStatus" :messages="port.messages" />
-      </div>
-      <div v-else-if="port.buffer.length > 0 && !showMessageStatus && !simulationRunning && simulationStartTime" class="scroll-container">
-        <RawMessageList :buffer="port.buffer.split('\n')" :simulationOffset="simulationStartTime - port.syncSendTime" :millisAtSync="port.millisAtSync" />
+        <div v-if="port.messages.length > 0 && showMessageStatus" class="scroll-container">
+          <MessageStatus ref="messageStatus" :messages="port.messages" />
+        </div>
+        <div v-else-if="port.buffer.length > 0 && !showMessageStatus && !simulationRunning && simulationStartTime"
+          class="scroll-container">
+          <RawMessageList :buffer="port.buffer.split('\n')" :simulationOffset="simulationStartTime - port.syncSendTime"
+            :millisAtSync="port.millisAtSync" />
+        </div>
       </div>
     </div>
   </div>
@@ -1005,6 +1020,18 @@ export default {
   z-index: 9999;
 }
 
+.center-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+
 .loading-spinner {
   border: 4px solid rgba(255, 255, 255, 0.3);
   border-top: 4px solid white;
@@ -1049,7 +1076,6 @@ export default {
 .help-text {
   background: #fff9c4;
   padding: 8px 12px;
-  margin-top: 5px;
   border: 1px solid #ffd54f;
   border-radius: 4px;
   max-width: 800px;
@@ -1104,12 +1130,6 @@ export default {
   border: none;
 }
 
-.console-buttons {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-}
-
 /* Messages List */
 .messages-header {
   display: flex;
@@ -1118,6 +1138,29 @@ export default {
   gap: 6px;
   margin-top: 8px;
 }
+
+.file-upload-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 20px 0;
+  /* Adjust vertical spacing as needed */
+}
+
+.file-upload-container input[type="file"] {
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+
+.grid-container {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+
 
 .scroll-container {
   height: 300px;
