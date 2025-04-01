@@ -1027,10 +1027,9 @@ export default {
   background: white;
   padding: 20px;
   border-radius: 8px;
-  max-width: 800px;
+  max-width: 1500px;
   margin: 0 auto;
 }
-
 
 .loading-spinner {
   border: 4px solid rgba(255, 255, 255, 0.3);
@@ -1153,14 +1152,13 @@ export default {
   border-radius: 4px;
 }
 
-
 .grid-container {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 20px;
+  width: -webkit-fill-available;
+  width: 100%;
 }
-
-
 
 .scroll-container {
   height: 300px;

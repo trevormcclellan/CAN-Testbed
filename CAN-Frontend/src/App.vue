@@ -7,7 +7,7 @@
   <div>
     <nav>
       <a href="/">Home</a>
-      <a href="/connect">Connect Device</a>
+      <a href="/connect">Connect Devices</a>
     </nav>
     <router-view></router-view> <!-- This is where your components will be rendered -->
   </div>
