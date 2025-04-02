@@ -139,11 +139,19 @@
     </div>
 
     <div class="toggle-container">
+      <div v-if="showHelp.messageStatus" class="help-text" id="message-status-help">
+        <p>Process messages to determine if they were expected or injected. When turned on, it can take a long time to
+          process when using large traffic dumps. When turned off, only the received messages and their timestamps will
+          be shown (faster).</p>
+      </div>
       <label class="switch">
         <input type="checkbox" v-model="showMessageStatus" />
         <span class="slider round"></span>
       </label>
       <span>Show Message Status</span>
+      <span class="help-icon" @mouseenter="showHelp.messageStatus = true" @mouseleave="showHelp.messageStatus = false">
+        (?)
+      </span>
     </div>
 
     <h1>Serial Consoles</h1>
@@ -185,25 +193,25 @@
         </div>
 
         <div class="button-group">
-        <button @click="configureMask(port, index)">Configure Mask</button>
-        <button @click="configureAttack(port)">Configure Injection</button>
-      </div>
+          <button @click="configureMask(port, index)">Configure Mask</button>
+          <button @click="configureAttack(port)">Configure Injection</button>
+        </div>
 
-      <div class="messages-header">
-        <h3>
-          Messages
-          <span class="help-icon" @mouseenter="showMessageHelp = index" @mouseleave="showMessageHelp = null">
-            (?)
-          </span>
-        </h3>
-      </div>
+        <div class="messages-header">
+          <h3>
+            Messages
+            <span class="help-icon" @mouseenter="showMessageHelp = index" @mouseleave="showMessageHelp = null">
+              (?)
+            </span>
+          </h3>
+        </div>
 
-      <div v-if="showMessageHelp === index" class="help-text">
-        <p>
-          This section displays CAN messages received from the connected board.<br />
-          If there are no messages, this section will be hidden.
-        </p>
-      </div>
+        <div v-if="showMessageHelp === index" class="help-text">
+          <p>
+            This section displays CAN messages received from the connected board.<br />
+            If there are no messages, this section will be hidden.
+          </p>
+        </div>
 
         <div v-if="port.messages.length > 0 && showMessageStatus" class="scroll-container">
           <MessageStatus ref="messageStatus" :messages="port.messages" />
@@ -269,6 +277,7 @@ export default {
         index: null,
       },
       showHelp: {
+        messageStatus: false,
         message: false,
         repeat: false,
         interval: false,
@@ -523,20 +532,22 @@ export default {
       let ecuMessages = [];
       let messageMap = new Map();
 
-      this.canMessages
-        .filter((message) => matchingIDs.includes(message.id.toString(16).toUpperCase())) // Compare as hex strings
-        .forEach((message, index) => {
-          const text = `${message.id}#${message.data}`;
-          const entry = { text, status: "unreceived", timestamp: null };
+      if (this.showMessageStatus) {
+        this.canMessages
+          .filter((message) => matchingIDs.includes(message.id.toString(16).toUpperCase())) // Compare as hex strings
+          .forEach((message, index) => {
+            const text = `${message.id}#${message.data}`;
+            const entry = { text, status: "unreceived", timestamp: null };
 
-          ecuMessages.push(entry);
+            ecuMessages.push(entry);
 
-          // Maintain an ordered list of indices for each message content
-          if (!messageMap.has(text)) {
-            messageMap.set(text, []);
-          }
-          messageMap.get(text).push(index); // Store index to support duplicates
-        });
+            // Maintain an ordered list of indices for each message content
+            if (!messageMap.has(text)) {
+              messageMap.set(text, []);
+            }
+            messageMap.get(text).push(index); // Store index to support duplicates
+          });
+      }
 
       this.serialPorts[index].messages = ecuMessages;
       this.serialPorts[index].messageMap = messageMap;
@@ -1087,6 +1098,10 @@ export default {
   line-height: 1.4rem;
   transition: none !important;
   animation: none !important;
+}
+
+#message-status-help {
+  margin-top: 120px;
 }
 
 /* Console Section */
