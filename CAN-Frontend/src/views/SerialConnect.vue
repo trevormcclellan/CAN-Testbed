@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div>
+    <div class="button-group">
       <h3>Add New Device</h3>
       <input v-model="deviceName" placeholder="Enter device name" />
       <button @click="addDevice">Add Device</button>
@@ -198,6 +198,31 @@ export default {
 </script>
 
 <style scoped>
+.button-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 20px 0;
+}
+
+.button {
+  padding: 8px 12px;
+  font-size: 14px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  background-color: #f8f9fa;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  color: #333;
+}
+
+.button:hover {
+  background-color: #e0e0e0;
+}
+
+
+
 button {
   margin-top: 10px;
   margin-bottom: 10px;
