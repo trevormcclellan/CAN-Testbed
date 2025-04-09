@@ -15,6 +15,9 @@ if ! command -v arduino-cli &> /dev/null; then
         mkdir -p "$INSTALL_DIR"
         mv ./bin/arduino-cli "$ARDUINO_CLI_BIN"
 
+        # Clean up empty bin directory from installer
+        rmdir ./bin 2>/dev/null || echo "⚠️ Could not remove ./bin directory (may not be empty)."
+
         # Make sure $INSTALL_DIR is in the user's PATH
         if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
             echo "🔧 Adding $INSTALL_DIR to PATH"
