@@ -296,6 +296,12 @@ void handleCommand(const char *command)
   {
     handleUpload(command);
   }
+  else if (strcmp(command, "sync") == 0)
+  {
+    Serial.print("sync:");
+    Serial.print(millis());
+    Serial.println(":endsync");
+  }
   else if (strncmp(command, "replay:", 7) == 0)
   {
     handleReplayAttack(command);
@@ -364,7 +370,7 @@ void processSerialQueue()
     if (message != nullptr)
     {
       // Check if there's enough space in the serial buffer to send the message
-      if (Serial.availableForWrite() >= strlen(message))
+      if (Serial.availableForWrite() >= strlen(message) + 2)
       {
         Serial.println(message);  // Print the message to serial
         messageQueue.dequeue();  // Remove the message from the queue
